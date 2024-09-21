@@ -6,7 +6,7 @@ class SchemaDownloader {
       Uri.parse(url),
       headers: {'Content-Type': 'application/json'},
       body:
-          '{"query": "{ __schema { types { name kind description fields { name type { name kind ofType { name kind } } } } } }"}',
+          '{"operationName":"IntrospectionQuery","query":"query IntrospectionQuery {\n  __type(name: \"__Schema\") {\n    name\n    fields {\n      name\n    }\n  }\n}"}',
     );
 
     if (response.statusCode == 200) {
