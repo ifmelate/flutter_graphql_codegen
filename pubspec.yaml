@@ -1,5 +1,5 @@
 name: flutter_graphql_codegen
-description: "A new Flutter project."
+description: "A Flutter plugin for GraphQL code generation."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -35,16 +35,15 @@ dependencies:
   http: ^1.1.2
   graphql: ^5.0.0
   path: ^1.8.0
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
+  source_gen: ^1.5.0
+  build_config: ^1.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  build_runner: ^2.0.0
+  build_runner: ^2.4.0
   build_test: ^2.0.0
-  
+
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your
