@@ -1,7 +1,7 @@
 name: flutter_graphql_codegen
 description: A starting point for Dart libraries or applications.
 version: 1.0.0
-# repository: https://github.com/my_org/my_repo
+repository: https://github.com/ifmelate/flutter_graphql_codegen.git
 
 environment:
   sdk: ^3.0.0
@@ -12,7 +12,7 @@ dependencies:
   build: ^2.0.0
   yaml: ^3.1.0
   http: ^1.1.2
-  graphql: ^5.0.0
+  graphql: ^5.1.0
   glob: ^2.1.0
   gql: ^1.0.0
 

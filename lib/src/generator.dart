@@ -1,3 +1,5 @@
+import 'package:graphql/client.dart';
+
 class GraphQLCodeGenerator {
   static String generateOperationCode(
     String schema,
@@ -5,30 +7,36 @@ class GraphQLCodeGenerator {
     String operationName,
     String operationType,
   ) {
+    final methodName =
+        operationType.toLowerCase() == 'mutation' ? 'mutate' : 'query';
+    final optionsType = operationType.capitalize() + 'Options';
+
     return '''
-import 'package:graphql/graphql.dart';
+import 'package:graphql/client.dart';
 
 class ${operationName}GraphQLClient {
   final GraphQLClient client;
 
   ${operationName}GraphQLClient(this.client);
 
-  Future<Map<String, dynamic>> execute([Map<String, dynamic>? variables]) async {
-    final result = await client.${operationType.toLowerCase()}(
-      ${operationType.capitalize()}Options(
-        document: gql(r"""
+  Future<QueryResult<Object?>> execute([Map<String, dynamic>? variables]) async {
+    final options = $optionsType(
+      document: gql(r"""
 $documentContent
-        """),
-        variables: variables ?? const {},
-      ),
+      """),
+      variables: variables ?? const {},
     );
+
+    final result = await client.$methodName(options);
 
     if (result.hasException) {
       throw result.exception!;
     }
 
-    return result.data!;
+    return result;
   }
+
+  Map<String, dynamic>? get data => execute().then((result) => result.data);
 }
 ''';
   }
