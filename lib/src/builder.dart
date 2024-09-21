@@ -7,7 +7,7 @@ import 'package:flutter_graphql_codegen/src/utils.dart';
 import 'package:glob/glob.dart';
 import 'package:glob/list_local_fs.dart';
 import 'config.dart';
-import 'package:yaml/yaml.dart' as yaml;
+import 'package:path/path.dart' as path;
 
 class GraphQLCodegenBuilder implements Builder {
   final GraphQLCodegenConfig config;
@@ -50,6 +50,10 @@ class GraphQLCodegenBuilder implements Builder {
         final outputFileName = '${operation.name}_graphql_client.dart';
         print('Generating graphql client $outputFileName');
         final outputPath = '${config.outputDir}/$outputFileName';
+        final directory = Directory(path.dirname(outputPath));
+        if (!await directory.exists()) {
+          await directory.create(recursive: true);
+        }
         await File(outputPath).writeAsString(generatedCode);
         print('Generated: $outputPath');
       }
