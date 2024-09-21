@@ -22,14 +22,36 @@ class GraphQLCodeGenerator {
 
   static String generateTypesFile(String schema) {
     final schemaDoc = gql_lang.parseString(schema);
-    final customScalars = _extractCustomScalars(schemaDoc);
-    final scalarConverters = _generateScalarConverters(customScalars);
+    _customScalars = _extractCustomScalars(schemaDoc);
+    final scalarConverters = _generateScalarConverters(_customScalars);
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc);
 
     return '''
 import 'package:json_annotation/json_annotation.dart';
+import 'package:intl/intl.dart';
+import 'package:decimal/decimal.dart';
 
 part 'types.g.dart';
+
+class DateTimeConverter implements JsonConverter<DateTime, String> {
+  const DateTimeConverter();
+
+  @override
+  DateTime fromJson(String json) => DateTime.parse(json);
+
+  @override
+  String toJson(DateTime object) => object.toIso8601String();
+}
+
+class DecimalConverter implements JsonConverter<Decimal, String> {
+  const DecimalConverter();
+
+  @override
+  Decimal fromJson(String json) => Decimal.parse(json);
+
+  @override
+  String toJson(Decimal object) => object.toString();
+}
 
 $scalarConverters
 
@@ -163,11 +185,17 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
           .replaceAll('?', '')
           .replaceAll('List<', '')
           .replaceAll('>', '');
-      if (!_builtInScalars.contains(baseType) &&
+
+      if (baseType == 'DateTime') {
+        classBuffer.writeln('  @DateTimeConverter()');
+      } else if (baseType == 'Decimal') {
+        classBuffer.writeln('  @DecimalConverter()');
+      } else if (!_builtInScalars.contains(baseType) &&
           !_scalarToDartType.containsKey(baseType) &&
           _customScalars.contains(baseType)) {
         classBuffer.writeln('  @${baseType}Converter()');
       }
+
       classBuffer.writeln('  final $fieldType ${fieldName.toCamelCase()};');
     }
 
