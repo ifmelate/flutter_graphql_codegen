@@ -10,9 +10,7 @@ class GraphQLCodegenBuilder implements Builder {
   GraphQLCodegenBuilder(this.config);
 
   @override
-  Future<void> build(BuildStep buildStep) async {
-    // ... (оставьте остальной код без изменений)
-  }
+  Future<void> build(BuildStep buildStep) async {}
 
   @override
   Map<String, List<String>> get buildExtensions => {
@@ -32,6 +30,15 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   }
 
   final yamlString = configFile.readAsStringSync();
-  // Передаем строку напрямую, без парсинга
-  return GraphQLCodegenBuilder(GraphQLCodegenConfig.fromYaml(yamlString));
+
+  try {
+    final yamlMap = yaml.loadYaml(yamlString) as yaml.YamlMap;
+    print('Loaded YAML: $yamlMap');
+    final config = GraphQLCodegenConfig.fromYaml(yamlString);
+    return GraphQLCodegenBuilder(config);
+  } catch (e, stackTrace) {
+    print('Error parsing config: $e');
+    print('Stack trace: $stackTrace');
+    rethrow;
+  }
 }
