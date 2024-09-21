@@ -18,7 +18,7 @@ class GraphQLCodegenBuilder implements Builder {
     print('BuildStep of graphql codegen: ${buildStep.inputId}');
     // if (inputId.extension == '.schema.graphql') {
     // This is the schema file
-    final schemaUrl = await buildStep.readAsString(inputId);
+    final schemaUrl = this.config.schemaUrl;
     print('Downloading schema from $schemaUrl');
     final schema = await SchemaDownloader.downloadSchema(schemaUrl);
     print('Graphql Schema downloaded from ${schemaUrl}');

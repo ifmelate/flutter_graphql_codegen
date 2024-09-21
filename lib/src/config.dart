@@ -5,12 +5,12 @@ import 'package:glob/glob.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
 class GraphQLCodegenConfig {
-  final String schemaPath;
+  final String schemaUrl;
   final String outputDir;
   final List<String> documentPaths;
 
   GraphQLCodegenConfig({
-    required this.schemaPath,
+    required this.schemaUrl,
     required this.outputDir,
     required this.documentPaths,
   });
@@ -20,7 +20,7 @@ class GraphQLCodegenConfig {
     print('Loaded YAML: $yamlMap');
 
     return GraphQLCodegenConfig(
-      schemaPath: yamlMap['schema_url'] as String,
+      schemaUrl: yamlMap['schema_url'] as String,
       outputDir: yamlMap['output_dir'] as String,
       documentPaths: (yamlMap['document_paths'] as YamlList)
           .map((e) => e as String)
