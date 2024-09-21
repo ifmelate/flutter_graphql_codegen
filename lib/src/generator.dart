@@ -36,7 +36,7 @@ $documentContent
     return result;
   }
 
-  Map<String, dynamic>? get data => execute().then((result) => result.data);
+   Future<Map<String, dynamic>?> get data => execute().then((result) => result.data);
 }
 ''';
   }
