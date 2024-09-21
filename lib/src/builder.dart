@@ -16,27 +16,27 @@ class GraphQLCodegenBuilder implements Builder {
     final inputId = buildStep.inputId;
     List<String> documents = [];
     print('BuildStep of graphql codegen: ${buildStep.inputId}');
-    if (inputId.extension == '.schema.graphql') {
-      // This is the schema file
-      final schemaUrl = await buildStep.readAsString(inputId);
-      print('Downloading schema from $schemaUrl');
-      final schema = await SchemaDownloader.downloadSchema(schemaUrl);
-      print('Graphql Schema downloaded from ${schemaUrl}');
-      final documentPaths = config.resolveDocumentPaths();
-      documents = await Future.wait(
-          documentPaths.map((path) => File(path).readAsString()));
-      final generatedCode =
-          GraphQLCodeGenerator.generateClientCode(schema, documents);
-      final outputId =
-          AssetId(inputId.package, '${config.outputDir}/generated_client.dart');
-      await buildStep.writeAsString(outputId, generatedCode);
-    } else if (inputId.extension == '.graphql') {
-      // This is a document file
-      print('Reading document from ${inputId}');
-      final document = await buildStep.readAsString(inputId);
-      documents.add(document);
-      // We don't generate individual files for documents in this setup
-    }
+    // if (inputId.extension == '.schema.graphql') {
+    // This is the schema file
+    final schemaUrl = await buildStep.readAsString(inputId);
+    print('Downloading schema from $schemaUrl');
+    final schema = await SchemaDownloader.downloadSchema(schemaUrl);
+    print('Graphql Schema downloaded from ${schemaUrl}');
+    final documentPaths = config.resolveDocumentPaths();
+    documents = await Future.wait(
+        documentPaths.map((path) => File(path).readAsString()));
+    final generatedCode =
+        GraphQLCodeGenerator.generateClientCode(schema, documents);
+    final outputId =
+        AssetId(inputId.package, '${config.outputDir}/generated_client.dart');
+    await buildStep.writeAsString(outputId, generatedCode);
+    // } else if (inputId.extension == '.graphql') {
+    // This is a document file
+    // print('Reading document from ${inputId}');
+    // final document = await buildStep.readAsString(inputId);
+    // documents.add(document);
+    // We don't generate individual files for documents in this setup
+    // }
   }
 
   @override
