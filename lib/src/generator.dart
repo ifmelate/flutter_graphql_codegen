@@ -71,6 +71,18 @@ class DecimalConverter implements JsonConverter<Decimal, String> {
   String toJson(Decimal object) => object.toString();
 }
 
+class EnumConverter<T> implements JsonConverter<T, String> {
+  const EnumConverter(this.valueMap);
+
+  final Map<String, T> valueMap;
+
+  @override
+  T fromJson(String json) => valueMap[json]!;
+
+  @override
+  String toJson(T object) => object.toString().split('.').last;
+}
+
 $scalarConverters
 
 $enumDefinitions
@@ -81,23 +93,12 @@ $typeDefinitions
 ''';
   }
 
-  static String _generateAllTypeDefinitions(DocumentNode schemaDoc) {
-    final buffer = StringBuffer();
-
-    for (final definition in schemaDoc.definitions) {
-      if (definition is ObjectTypeDefinitionNode) {
-        buffer.writeln(_generateClassForType(definition));
-      }
-    }
-
-    return buffer.toString();
-  }
-
   static String generateCode(
     String schema,
     String documentContent,
     String operationName,
     String operationType,
+    String typesContent,
   ) {
     final schemaDoc = gql_lang.parseString(schema);
     final operationDoc = gql_lang.parseString(documentContent);
@@ -105,8 +106,9 @@ $typeDefinitions
     final customScalars = _extractCustomScalars(schemaDoc);
     final scalarConverters = _generateScalarConverters(customScalars);
     final typeDefinitions = _generateTypeDefinitions(schemaDoc);
+    final definedTypes = extractDefinedTypes(typesContent);
     final clientExtension = _generateClientExtension(
-        operationName, operationType, operationDoc, schemaDoc);
+        operationName, operationType, operationDoc, schemaDoc, definedTypes);
 
     return '''
 import 'package:graphql/client.dart' as graphql;
@@ -127,11 +129,13 @@ $clientExtension
     String documentContent,
     String operationName,
     String operationType,
+    String typesContent,
   ) {
     final schemaDoc = gql_lang.parseString(schema);
     final operationDoc = gql_lang.parseString(documentContent);
+    final definedTypes = extractDefinedTypes(typesContent);
     final clientExtension = _generateClientExtension(
-        operationName, operationType, operationDoc, schemaDoc);
+        operationName, operationType, operationDoc, schemaDoc, definedTypes);
 
     return '''
 import 'package:graphql/client.dart' as graphql;
@@ -260,12 +264,17 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
     return 'dynamic';
   }
 
-  static String _generateClientExtension(String operationName,
-      String operationType, DocumentNode operationDoc, DocumentNode schemaDoc) {
+  static String _generateClientExtension(
+      String operationName,
+      String operationType,
+      DocumentNode operationDoc,
+      DocumentNode schemaDoc,
+      Set<String> definedTypes) {
     final methodName =
         operationType.toLowerCase() == 'mutation' ? 'mutate' : 'query';
     final optionsType = '${operationType.capitalize()}Options';
-    final returnType = _getOperationReturnType(operationDoc, schemaDoc);
+    final returnType =
+        _getOperationReturnType(operationDoc, schemaDoc, definedTypes);
     final fieldName = _getOperationFieldName(operationDoc);
 
     return '''
@@ -301,8 +310,8 @@ ${operationDoc.toString()}
 ''';
   }
 
-  static String _getOperationReturnType(
-      DocumentNode operationDoc, DocumentNode schemaDoc) {
+  static String _getOperationReturnType(DocumentNode operationDoc,
+      DocumentNode schemaDoc, Set<String> definedTypes) {
     for (final definition in operationDoc.definitions) {
       if (definition is OperationDefinitionNode) {
         final operationType = definition.type.toString().toLowerCase();
@@ -314,25 +323,59 @@ ${operationDoc.toString()}
               final fieldName = firstSelection.name.value;
               final field =
                   rootType.fields.firstWhere((f) => f.name.value == fieldName);
-              final fieldType = _getDartType(field.type);
+              final schemaType = _getSchemaType(field.type);
 
-              // Если тип поля - список, возвращаем тип элемента списка
-              if (fieldType.startsWith('List<')) {
-                return fieldType.substring(5, fieldType.length - 1);
-              }
-
-              // Если тип поля оканчивается на '?', убираем этот символ
-              if (fieldType.endsWith('?')) {
-                return fieldType.substring(0, fieldType.length - 1);
-              }
-
-              return fieldType;
+              // Сопоставляем тип из схемы с типом в types.dart
+              return _mapSchemaTypeToDartType(schemaType, definedTypes);
             }
           }
         }
       }
     }
     return 'dynamic';
+  }
+
+  static String _getSchemaType(TypeNode type) {
+    if (type is NamedTypeNode) {
+      return '${type.name.value}?';
+    } else if (type is ListTypeNode) {
+      return 'List<${_getSchemaType(type.type)}>?';
+    }
+    return 'dynamic';
+  }
+
+  static String _mapSchemaTypeToDartType(
+      String schemaType, Set<String> definedTypes) {
+    final isNullable = schemaType.endsWith('?');
+    final baseType = isNullable
+        ? schemaType.substring(0, schemaType.length - 1)
+        : schemaType;
+
+    if (baseType.startsWith('List<')) {
+      final innerType = baseType.substring(5, baseType.length - 1);
+      final mappedInnerType = _mapSchemaTypeToDartType(innerType, definedTypes);
+      return isNullable ? 'List<$mappedInnerType>?' : 'List<$mappedInnerType>';
+    }
+
+    if (_isScalarType(baseType)) {
+      return isNullable ? '$baseType?' : baseType;
+    } else if (definedTypes.contains(baseType)) {
+      return isNullable ? '$baseType?' : baseType;
+    }
+
+    return 'dynamic';
+  }
+
+  static bool _isScalarType(String typeName) {
+    final scalarTypes = [
+      'Int',
+      'Float',
+      'String',
+      'Boolean',
+      'ID',
+      ...GraphQLCodeGenerator._customScalars
+    ];
+    return scalarTypes.contains(typeName);
   }
 
   static ObjectTypeDefinitionNode? _findRootType(
@@ -410,6 +453,79 @@ ${operationDoc.toString()}
       }
     }
     return '';
+  }
+
+  static Set<String> extractDefinedTypes(String typesContent) {
+    final definedTypes = Set<String>();
+    final classRegex = RegExp(r'class\s+(\w+)');
+    final matches = classRegex.allMatches(typesContent);
+    for (final match in matches) {
+      definedTypes.add(match.group(1)!);
+    }
+    return definedTypes;
+  }
+
+  static String _generateAllTypeDefinitions(DocumentNode schemaDoc) {
+    final buffer = StringBuffer();
+
+    for (final definition in schemaDoc.definitions) {
+      if (definition is ObjectTypeDefinitionNode) {
+        buffer.writeln(_generateTypeDefinition(definition));
+      }
+    }
+
+    return buffer.toString();
+  }
+
+  static String _generateTypeDefinition(ObjectTypeDefinitionNode typeNode) {
+    final typeName = typeNode.name.value;
+    final fields = typeNode.fields;
+
+    final buffer = StringBuffer();
+    buffer.writeln('@JsonSerializable()');
+    buffer.writeln('class $typeName {');
+
+    for (final field in fields) {
+      final fieldName = field.name.value;
+      final fieldType = _getDartType(field.type);
+      buffer.writeln('  final $fieldType $fieldName;');
+    }
+
+    buffer.writeln();
+    buffer.writeln('  $typeName({');
+    for (final field in fields) {
+      final fieldName = field.name.value;
+      buffer.writeln('    required this.$fieldName,');
+    }
+    buffer.writeln('  });');
+
+    buffer.writeln();
+    buffer.writeln(
+        '  factory $typeName.fromJson(Map<String, dynamic> json) => _\$${typeName}FromJson(json);');
+    buffer.writeln(
+        '  Map<String, dynamic> toJson() => _\$${typeName}ToJson(this);');
+
+    buffer.writeln('}');
+    buffer.writeln();
+
+    return buffer.toString();
+  }
+
+  static String _mapGraphQLTypeToDartType(String graphqlType) {
+    switch (graphqlType) {
+      case 'Int':
+        return 'int';
+      case 'Float':
+        return 'double';
+      case 'String':
+        return 'String';
+      case 'Boolean':
+        return 'bool';
+      case 'ID':
+        return 'String';
+      default:
+        return graphqlType;
+    }
   }
 }
 

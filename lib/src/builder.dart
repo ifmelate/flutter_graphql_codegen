@@ -45,17 +45,16 @@ class GraphQLCodegenBuilder implements Builder {
     if (documentPaths.isEmpty) {
       throw Exception('No Graphql Documents found');
     }
+
+    final typesContent = await File(typesOutputPath).readAsString();
+
     for (final documentPath in documentPaths) {
       final documentContent = await File(documentPath).readAsString();
       final operations = parseOperations(documentContent);
 
       for (final operation in operations) {
-        final operationCode = GraphQLCodeGenerator.generateOperationFile(
-          schema,
-          documentContent,
-          operation.name,
-          operation.type,
-        );
+        final operationCode = GraphQLCodeGenerator.generateOperationFile(schema,
+            documentContent, operation.name, operation.type, typesContent);
 
         final outputFileName = '${operation.name.toLowerCase()}_graphql.dart';
         print('Generating GraphQL client $outputFileName');
