@@ -24,6 +24,7 @@ class GraphQLCodeGenerator {
     final schemaDoc = gql_lang.parseString(schema);
     _customScalars = _extractCustomScalars(schemaDoc);
     final scalarConverters = _generateScalarConverters(_customScalars);
+    final enumDefinitions = _generateEnumDefinitions(schemaDoc);
     final enumConverters = _generateEnumConverters(schemaDoc);
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc);
 
@@ -67,6 +68,8 @@ class EnumConverter<T> implements JsonConverter<T, String> {
 }
 
 $scalarConverters
+
+$enumDefinitions
 
 $enumConverters
 
@@ -321,6 +324,24 @@ ${operationDoc.toString()}
               "    '${value.name.value}': $enumName.${value.name.value},");
         }
         buffer.writeln('  });');
+        buffer.writeln('}');
+        buffer.writeln();
+      }
+    }
+
+    return buffer.toString();
+  }
+
+  static String _generateEnumDefinitions(DocumentNode schemaDoc) {
+    final buffer = StringBuffer();
+
+    for (final definition in schemaDoc.definitions) {
+      if (definition is EnumTypeDefinitionNode) {
+        final enumName = definition.name.value;
+        buffer.writeln('enum $enumName {');
+        for (final value in definition.values) {
+          buffer.writeln('  ${value.name.value},');
+        }
         buffer.writeln('}');
         buffer.writeln();
       }
