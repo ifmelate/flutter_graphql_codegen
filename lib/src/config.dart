@@ -1,22 +1,22 @@
-import 'package:yaml/yaml.dart';
+import 'package:yaml/yaml.dart' as yaml;
 
 class GraphQLCodegenConfig {
   final String schemaUrl;
   final String outputDir;
-  final List<String> includes;
+  final List<String> documents; // Предполагаем, что это поле вызывает ошибку
 
   GraphQLCodegenConfig({
     required this.schemaUrl,
     required this.outputDir,
-    required this.includes,
+    this.documents = const [], // Значение по умолчанию - пустой список
   });
 
   factory GraphQLCodegenConfig.fromYaml(String yamlString) {
-    final yaml = loadYaml(yamlString);
+    final yamlMap = yaml.loadYaml(yamlString) as yaml.YamlMap;
     return GraphQLCodegenConfig(
-      schemaUrl: yaml['schema_url'],
-      outputDir: yaml['output_dir'],
-      includes: List<String>.from(yaml['includes']),
+      schemaUrl: yamlMap['schema_url'] as String? ?? '',
+      outputDir: yamlMap['output_dir'] as String? ?? '',
+      documents: (yamlMap['documents'] as List<dynamic>?)?.cast<String>() ?? [],
     );
   }
 }
