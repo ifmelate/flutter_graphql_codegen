@@ -21,10 +21,10 @@ class GraphQLCodegenBuilder implements Builder {
     print('BuildStep of graphql codegen: ${buildStep.inputId}');
     // if (inputId.extension == '.schema.graphql') {
     // This is the schema file
-    final schemaUrl = this.config.schemaUrl;
+    final schemaUrl = config.schemaUrl;
     print('Downloading schema from $schemaUrl');
     final schema = await SchemaDownloader.downloadSchema(schemaUrl);
-    print('Graphql Schema downloaded from ${schemaUrl}');
+    print('Graphql Schema downloaded from $schemaUrl');
 
     /* final generatedCode =
         GraphQLCodeGenerator.generateClientCode(schema, documents);
@@ -40,7 +40,7 @@ class GraphQLCodegenBuilder implements Builder {
       final operations = parseOperations(documentContent);
 
       for (final operation in operations) {
-        final generatedCode = GraphQLCodeGenerator.generateOperationCode(
+        final generatedCode = GraphQLCodeGenerator.generateCode(
           schema,
           documentContent,
           operation.name,
