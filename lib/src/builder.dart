@@ -31,7 +31,7 @@ class GraphQLCodegenBuilder implements Builder {
         */
     // Process each document
     final documentPaths = await _resolveDocumentPaths(config.documentPaths);
-
+    print('Found ${documentPaths.length} Graphql Documents');
     for (final documentPath in documentPaths) {
       final documentContent = await File(documentPath).readAsString();
       final operations = parseOperations(documentContent);
@@ -45,6 +45,7 @@ class GraphQLCodegenBuilder implements Builder {
         );
 
         final outputFileName = '${operation.name}_graphql_client.dart';
+        print('Generating graphql client $outputFileName');
         final outputPath = '${config.outputDir}/$outputFileName';
         await File(outputPath).writeAsString(generatedCode);
         print('Generated: $outputPath');
