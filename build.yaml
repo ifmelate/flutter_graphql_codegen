@@ -5,11 +5,17 @@ builders:
     build_extensions: {".dart": [".graphql.dart"]}
     auto_apply: root_package
     build_to: source
-    options:
-      config_path: graphql_codegen.yaml
+    defaults:
+      options:
+        config_path: graphql_codegen.yaml
 
 targets:
   $default:
     builders:
       flutter_graphql_codegen|graphql_codegen:
         enabled: true
+        generate_for:
+          include:
+            - lib/**
+          exclude:
+            - test/**

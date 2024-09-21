@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:build/build.dart';
 import 'config.dart';
+import 'package:yaml/yaml.dart' as yaml;
 
 class GraphQLCodegenBuilder implements Builder {
   final GraphQLCodegenConfig config;
@@ -18,10 +21,19 @@ class GraphQLCodegenBuilder implements Builder {
 }
 
 Builder graphqlCodegenBuilder(BuilderOptions options) {
-  final yamlString = options.config['graphql_codegen'] as String?;
-  print(yamlString);
-  if (yamlString == null) {
-    throw ArgumentError('Missing configuration for GraphQLCodegenBuilder');
+  final configPath = options.config['config_path'] as String?;
+  if (configPath == null) {
+    throw ArgumentError('Missing config_path in builder options');
   }
-  return GraphQLCodegenBuilder(GraphQLCodegenConfig.fromYaml(yamlString));
+
+  final configFile = File(configPath);
+  if (!configFile.existsSync()) {
+    throw FileSystemException('Config file not found', configPath);
+  }
+
+  final yamlString = configFile.readAsStringSync();
+  final yamlConfig = yaml.loadYaml(yamlString);
+
+  // Используйте yamlConfig для настройки вашего билдера
+  return GraphQLCodegenBuilder(GraphQLCodegenConfig.fromYaml(yamlConfig));
 }
