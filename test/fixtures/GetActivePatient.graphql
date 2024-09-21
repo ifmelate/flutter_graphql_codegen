@@ -1,0 +1,28 @@
+query getActivePatient{
+    activePatient {
+        address
+        birthAddress
+        birthDate
+        birthTime
+        comment
+        diagnoses
+        email
+        fullName
+        gender
+        id
+        isActive
+        number
+        phone1
+        phone2
+        phone3
+        registrationDate
+        skype
+        lastVisit {
+            createdDate
+            id
+            isCompleted
+            patientId
+            visitType
+        }
+    }
+} 

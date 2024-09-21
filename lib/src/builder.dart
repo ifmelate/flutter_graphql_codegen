@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:build/build.dart';
+import 'package:flutter_graphql_codegen/src/generator.dart';
 import 'config.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
@@ -10,7 +11,27 @@ class GraphQLCodegenBuilder implements Builder {
   GraphQLCodegenBuilder(this.config);
 
   @override
-  Future<void> build(BuildStep buildStep) async {}
+  Future<void> build(BuildStep buildStep) async {
+    final inputId = buildStep.inputId;
+    List<String> documents = [];
+    if (inputId.extension == '.schema.graphql') {
+      // This is the schema file
+      final schema = await buildStep.readAsString(inputId);
+      final documentPaths = config.resolveDocumentPaths();
+      documents = await Future.wait(
+          documentPaths.map((path) => File(path).readAsString()));
+      final generatedCode =
+          GraphQLCodeGenerator.generateClientCode(schema, documents);
+      final outputId =
+          AssetId(inputId.package, '${config.outputDir}/generated_client.dart');
+      await buildStep.writeAsString(outputId, generatedCode);
+    } else if (inputId.extension == '.graphql') {
+      // This is a document file
+      final document = await buildStep.readAsString(inputId);
+      documents.add(document);
+      // We don't generate individual files for documents in this setup
+    }
+  }
 
   @override
   Map<String, List<String>> get buildExtensions => {
@@ -32,8 +53,6 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   final yamlString = configFile.readAsStringSync();
 
   try {
-    final yamlMap = yaml.loadYaml(yamlString) as yaml.YamlMap;
-    print('Loaded YAML: $yamlMap');
     final config = GraphQLCodegenConfig.fromYaml(yamlString);
     return GraphQLCodegenBuilder(config);
   } catch (e, stackTrace) {
