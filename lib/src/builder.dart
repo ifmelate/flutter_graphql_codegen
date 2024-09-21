@@ -19,6 +19,7 @@ class GraphQLCodegenBuilder implements Builder {
 
 Builder graphqlCodegenBuilder(BuilderOptions options) {
   final yamlString = options.config['graphql_codegen'] as String?;
+  print(yamlString);
   if (yamlString == null) {
     throw ArgumentError('Missing configuration for GraphQLCodegenBuilder');
   }
