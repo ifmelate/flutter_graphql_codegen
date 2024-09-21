@@ -105,12 +105,13 @@ class SchemaDownloader {
       }),
     );
 
+    final jsonResponse = json.decode(response.body);
+
+    if (jsonResponse['errors'] != null) {
+      throw Exception(
+          'Failed to download schema: ${response.statusCode}. Errors: ${jsonResponse['errors']}');
+    }
     if (response.statusCode == 200) {
-      final jsonResponse = json.decode(response.body);
-      if (jsonResponse['errors'] != null) {
-        throw Exception(
-            'Failed to download schema: ${response.statusCode}. Errors: ${jsonResponse['errors']}');
-      }
       return json.encode(jsonResponse['data']);
     } else {
       throw Exception(
