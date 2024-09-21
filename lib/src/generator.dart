@@ -3,6 +3,21 @@ import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 
 class GraphQLCodeGenerator {
+  static final Set<String> _builtInScalars = {
+    'Int',
+    'Float',
+    'String',
+    'Boolean',
+    'ID'
+  };
+  static final Map<String, String> _scalarToDartType = {
+    'Int': 'int',
+    'Float': 'double',
+    'String': 'String',
+    'Boolean': 'bool',
+    'ID': 'String',
+  };
+
   static String generateCode(
     String schema,
     String documentContent,
@@ -12,6 +27,8 @@ class GraphQLCodeGenerator {
     final schemaDoc = gql_lang.parseString(schema);
     final operationDoc = gql_lang.parseString(documentContent);
 
+    final customScalars = _extractCustomScalars(schemaDoc);
+    final scalarConverters = _generateScalarConverters(customScalars);
     final typeDefinitions = _generateTypeDefinitions(schemaDoc);
     final clientExtension =
         _generateClientExtension(operationName, operationType, operationDoc);
@@ -22,10 +39,52 @@ import 'package:json_annotation/json_annotation.dart';
 
 part '${operationName.toLowerCase()}.g.dart';
 
+$scalarConverters
+
 $typeDefinitions
 
 $clientExtension
 ''';
+  }
+
+  static Set<String> _extractCustomScalars(DocumentNode schemaDoc) {
+    final customScalars = <String>{};
+    for (final definition in schemaDoc.definitions) {
+      if (definition is TypeDefinitionNode) {
+        final typeName = definition.name.value;
+        if (definition is ScalarTypeDefinitionNode &&
+            !_builtInScalars.contains(typeName)) {
+          customScalars.add(typeName);
+        }
+      }
+    }
+    return customScalars;
+  }
+
+  static String _generateScalarConverters(Set<String> customScalars) {
+    final buffer = StringBuffer();
+    for (final scalar in customScalars) {
+      buffer.writeln('''
+class $scalar {
+  final String value;
+  $scalar(this.value);
+
+  @override
+  String toString() => value;
+}
+
+class ${scalar}Converter implements JsonConverter<$scalar, String> {
+  const ${scalar}Converter();
+
+  @override
+  $scalar fromJson(String json) => $scalar(json);
+
+  @override
+  String toJson($scalar object) => object.toString();
+}
+''');
+    }
+    return buffer.toString();
   }
 
   static String _generateTypeDefinitions(DocumentNode schemaDoc) {
@@ -42,7 +101,7 @@ $clientExtension
 
   static String _generateClassForType(ObjectTypeDefinitionNode type) {
     final className = type.name.value;
-    final fields = type.fields ?? [];
+    final fields = type.fields;
 
     final classBuffer = StringBuffer();
     classBuffer.writeln('@JsonSerializable()');
@@ -51,13 +110,17 @@ $clientExtension
     for (final field in fields) {
       final fieldName = field.name.value;
       final fieldType = _getDartType(field.type);
-      classBuffer.writeln('  final $fieldType $fieldName;');
+      if (!_builtInScalars.contains(fieldType.replaceAll('?', ''))) {
+        classBuffer.writeln('  @${fieldType.replaceAll('?', '')}Converter()');
+      }
+      classBuffer.writeln('  final $fieldType ${fieldName.toCamelCase()};');
     }
 
     classBuffer.writeln();
     classBuffer.writeln('  $className({');
     for (final field in fields) {
-      classBuffer.writeln('    required this.${field.name.value},');
+      classBuffer
+          .writeln('    required this.${field.name.value.toCamelCase()},');
     }
     classBuffer.writeln('  });');
 
@@ -72,33 +135,15 @@ $clientExtension
     return classBuffer.toString();
   }
 
-  static String _getDartType(TypeNode type, {bool isNonNull = false}) {
+  static String _getDartType(TypeNode type) {
     if (type is NamedTypeNode) {
-      final typeName = _getBasicDartType(type.name.value);
-      return isNonNull ? typeName : '$typeName?';
+      final typeName = _scalarToDartType[type.name.value] ?? type.name.value;
+      return type.isNonNull ? typeName : '$typeName?';
     } else if (type is ListTypeNode) {
-      final innerType = _getDartType(type.type, isNonNull: false);
-      return isNonNull ? 'List<$innerType>' : 'List<$innerType>?';
-    } else {
-      return isNonNull ? 'dynamic' : 'dynamic?';
+      final innerType = _getDartType(type.type);
+      return type.isNonNull ? 'List<$innerType>' : 'List<$innerType>?';
     }
-  }
-
-  static String _getBasicDartType(String graphqlType) {
-    switch (graphqlType) {
-      case 'Int':
-        return 'int';
-      case 'Float':
-        return 'double';
-      case 'String':
-        return 'String';
-      case 'Boolean':
-        return 'bool';
-      case 'ID':
-        return 'String';
-      default:
-        return graphqlType;
-    }
+    return 'dynamic';
   }
 
   static String _generateClientExtension(
@@ -153,5 +198,12 @@ extension StringExtension on String {
 
   String decapitalize() {
     return "${this[0].toLowerCase()}${this.substring(1)}";
+  }
+
+  String toCamelCase() {
+    if (length < 2) {
+      return toLowerCase();
+    }
+    return "${this[0].toLowerCase()}${substring(1)}";
   }
 }
