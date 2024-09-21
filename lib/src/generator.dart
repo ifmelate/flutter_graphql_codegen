@@ -24,6 +24,7 @@ class GraphQLCodeGenerator {
     final schemaDoc = gql_lang.parseString(schema);
     _customScalars = _extractCustomScalars(schemaDoc);
     final scalarConverters = _generateScalarConverters(_customScalars);
+    final enumConverters = _generateEnumConverters(schemaDoc);
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc);
 
     return '''
@@ -53,7 +54,21 @@ class DecimalConverter implements JsonConverter<Decimal, String> {
   String toJson(Decimal object) => object.toString();
 }
 
+class EnumConverter<T> implements JsonConverter<T, String> {
+  const EnumConverter(this.valueMap);
+
+  final Map<String, T> valueMap;
+
+  @override
+  T fromJson(String json) => valueMap[json]!;
+
+  @override
+  String toJson(T object) => object.toString().split('.').last;
+}
+
 $scalarConverters
+
+$enumConverters
 
 $typeDefinitions
 ''';
@@ -190,6 +205,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         classBuffer.writeln('  @DateTimeConverter()');
       } else if (baseType == 'Decimal') {
         classBuffer.writeln('  @DecimalConverter()');
+      } else if (_isEnum(baseType)) {
+        classBuffer.writeln('  @${baseType}Converter()');
       } else if (!_builtInScalars.contains(baseType) &&
           !_scalarToDartType.containsKey(baseType) &&
           _customScalars.contains(baseType)) {
@@ -220,6 +237,12 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
     return classBuffer.toString();
   }
 
+  static bool _isEnum(String typeName) {
+    // Здесь вы можете добавить логику для определения, является ли тип перечислением
+    // Например, вы можете проверить, заканчивается ли имя типа на "Enum"
+    return typeName.endsWith('Enum');
+  }
+
   static String _getDartType(TypeNode type) {
     if (type is NamedTypeNode) {
       final typeName = _scalarToDartType[type.name.value] ?? type.name.value;
@@ -240,7 +263,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
 
     return '''
 extension ${operationName}Extension on graphql.GraphQLClient {
-  Future<graphql.QueryResult<$returnType>> ${operationName.decapitalize()}([Map<String, dynamic>? variables]) async {
+  Future<graphql.QueryResult<$returnType>> ${operationName.toCamelCase()}([Map<String, dynamic>? variables]) async {
     final options = graphql.$optionsType(
       document: graphql.gql(r"""
 ${operationDoc.toString()}
@@ -261,8 +284,8 @@ ${operationDoc.toString()}
     );
   }
 
-  Future<$returnType?> ${operationName.decapitalize()}Data([Map<String, dynamic>? variables]) async {
-    final result = await ${operationName.decapitalize()}(variables);
+  Future<$returnType?> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
+    final result = await ${operationName.toCamelCase()}(variables);
     return result.data;
   }
 }
@@ -283,15 +306,33 @@ ${operationDoc.toString()}
     }
     return 'dynamic';
   }
+
+  static String _generateEnumConverters(DocumentNode schemaDoc) {
+    final buffer = StringBuffer();
+
+    for (final definition in schemaDoc.definitions) {
+      if (definition is EnumTypeDefinitionNode) {
+        final enumName = definition.name.value;
+        buffer.writeln(
+            'class ${enumName}Converter extends EnumConverter<$enumName> {');
+        buffer.writeln('  const ${enumName}Converter() : super({');
+        for (final value in definition.values) {
+          buffer.writeln(
+              "    '${value.name.value}': $enumName.${value.name.value},");
+        }
+        buffer.writeln('  });');
+        buffer.writeln('}');
+        buffer.writeln();
+      }
+    }
+
+    return buffer.toString();
+  }
 }
 
 extension StringExtension on String {
   String capitalize() {
     return "${this[0].toUpperCase()}${this.substring(1)}";
-  }
-
-  String decapitalize() {
-    return "${this[0].toLowerCase()}${this.substring(1)}";
   }
 
   String toCamelCase() {
