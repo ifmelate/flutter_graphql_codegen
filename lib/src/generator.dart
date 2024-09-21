@@ -270,7 +270,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
 
     return '''
 extension ${operationName}Extension on graphql.GraphQLClient {
-  Future<graphql.QueryResult<$returnType>> ${operationName.toCamelCase()}([Map<String, dynamic>? variables]) async {
+  Future<graphql.QueryResult<$returnType?>> ${operationName.toCamelCase()}([Map<String, dynamic>? variables]) async {
     final options = graphql.$optionsType(
       document: graphql.gql(r"""
 ${operationDoc.toString()}
@@ -312,7 +312,19 @@ ${operationDoc.toString()}
               final fieldName = firstSelection.name.value;
               final field =
                   rootType.fields.firstWhere((f) => f.name.value == fieldName);
-              return _getDartType(field.type);
+              final fieldType = _getDartType(field.type);
+
+              // Если тип поля - список, возвращаем тип элемента списка
+              if (fieldType.startsWith('List<')) {
+                return fieldType.substring(5, fieldType.length - 1);
+              }
+
+              // Если тип поля оканчивается на '?', убираем этот символ
+              if (fieldType.endsWith('?')) {
+                return fieldType.substring(0, fieldType.length - 1);
+              }
+
+              return fieldType;
             }
           }
         }
