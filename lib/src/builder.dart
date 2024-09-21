@@ -32,6 +32,9 @@ class GraphQLCodegenBuilder implements Builder {
     // Process each document
     final documentPaths = await _resolveDocumentPaths(config.documentPaths);
     print('Found ${documentPaths.length} Graphql Documents');
+    if (documentPaths.isEmpty) {
+      throw Exception('No Graphql Documents found');
+    }
     for (final documentPath in documentPaths) {
       final documentContent = await File(documentPath).readAsString();
       final operations = parseOperations(documentContent);
