@@ -289,6 +289,7 @@ ${operationDoc.toString()}
       data: result.data != null ? result.data!['$fieldName'] : null,
       exception: result.exception,
       context: result.context,
+      source: graphql.QueryResultSource.network,
     );
   }
 
