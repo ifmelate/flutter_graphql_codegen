@@ -4,6 +4,8 @@ import 'package:build/build.dart';
 import 'package:flutter_graphql_codegen/src/generator.dart';
 import 'package:flutter_graphql_codegen/src/schema_downloader.dart';
 import 'package:flutter_graphql_codegen/src/utils.dart';
+import 'package:glob/glob.dart';
+import 'package:glob/list_local_fs.dart';
 import 'config.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
@@ -28,7 +30,7 @@ class GraphQLCodegenBuilder implements Builder {
         GraphQLCodeGenerator.generateClientCode(schema, documents);
         */
     // Process each document
-    final documentPaths = config.documentPaths;
+    final documentPaths = await _resolveDocumentPaths(config.documentPaths);
 
     for (final documentPath in documentPaths) {
       final documentContent = await File(documentPath).readAsString();
@@ -54,6 +56,19 @@ class GraphQLCodegenBuilder implements Builder {
   Map<String, List<String>> get buildExtensions => {
         r'$lib$': ['generated_client.dart'],
       };
+}
+
+Future<List<String>> _resolveDocumentPaths(List<String> patterns) async {
+  final resolvedPaths = <String>[];
+  for (final pattern in patterns) {
+    final glob = Glob(pattern);
+    await for (final entity in glob.list()) {
+      if (entity is File) {
+        resolvedPaths.add(entity.path);
+      }
+    }
+  }
+  return resolvedPaths;
 }
 
 Builder graphqlCodegenBuilder(BuilderOptions options) {
