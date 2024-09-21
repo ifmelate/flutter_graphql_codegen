@@ -4,7 +4,9 @@ class SchemaDownloader {
   static Future<String> downloadSchema(String url) async {
     final response = await http.post(
       Uri.parse(url),
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/graphql-response+json; charset=utf-8'
+      },
       body:
           '{"operationName":"IntrospectionQuery","query":"query IntrospectionQuery {\n  __type(name: \"__Schema\") {\n    name\n    fields {\n      name\n    }\n  }\n}"}',
     );
