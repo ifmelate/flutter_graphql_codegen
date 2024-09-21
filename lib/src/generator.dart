@@ -3,6 +3,8 @@ import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 
 class GraphQLCodeGenerator {
+  static Set<String> _customScalars = Set<String>();
+
   static final Set<String> _builtInScalars = {
     'Int',
     'Float',
@@ -162,7 +164,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
           .replaceAll('List<', '')
           .replaceAll('>', '');
       if (!_builtInScalars.contains(baseType) &&
-          !_scalarToDartType.containsKey(baseType)) {
+          !_scalarToDartType.containsKey(baseType) &&
+          _customScalars.contains(baseType)) {
         classBuffer.writeln('  @${baseType}Converter()');
       }
       classBuffer.writeln('  final $fieldType ${fieldName.toCamelCase()};');
