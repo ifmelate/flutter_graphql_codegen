@@ -4,17 +4,16 @@ class SchemaDownloader {
   static Future<String> downloadSchema(String url) async {
     final response = await http.post(
       Uri.parse(url),
-      headers: {
-        'Content-Type': 'application/graphql-response+json; charset=utf-8'
-      },
+      headers: {'Content-Type': 'application/json'},
       body:
-          '{"operationName":"IntrospectionQuery","query":"query IntrospectionQuery {\n  __type(name: \"__Schema\") {\n    name\n    fields {\n      name\n    }\n  }\n}"}',
+          '{"operationName":"IntrospectionQuery","query":"query IntrospectionQuery {  __type(name: \"__Schema\") {    name    fields {      name    }  }}"}',
     );
 
     if (response.statusCode == 200) {
       return response.body;
     } else {
-      throw Exception('Failed to download schema: ${response.statusCode}');
+      throw Exception(
+          'Failed to download schema: ${response.statusCode} and response body: ${response.body}');
     }
   }
 }
