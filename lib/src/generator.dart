@@ -18,6 +18,35 @@ class GraphQLCodeGenerator {
     'ID': 'String',
   };
 
+  static String generateTypesFile(String schema) {
+    final schemaDoc = gql_lang.parseString(schema);
+    final customScalars = _extractCustomScalars(schemaDoc);
+    final scalarConverters = _generateScalarConverters(customScalars);
+    final typeDefinitions = _generateAllTypeDefinitions(schemaDoc);
+
+    return '''
+import 'package:json_annotation/json_annotation.dart';
+
+part 'types.g.dart';
+
+$scalarConverters
+
+$typeDefinitions
+''';
+  }
+
+  static String _generateAllTypeDefinitions(DocumentNode schemaDoc) {
+    final buffer = StringBuffer();
+
+    for (final definition in schemaDoc.definitions) {
+      if (definition is ObjectTypeDefinitionNode) {
+        buffer.writeln(_generateClassForType(definition));
+      }
+    }
+
+    return buffer.toString();
+  }
+
   static String generateCode(
     String schema,
     String documentContent,
@@ -42,6 +71,24 @@ part '${operationName.toLowerCase()}.g.dart';
 $scalarConverters
 
 $typeDefinitions
+
+$clientExtension
+''';
+  }
+
+  static String generateOperationFile(
+    String schema,
+    String documentContent,
+    String operationName,
+    String operationType,
+  ) {
+    final operationDoc = gql_lang.parseString(documentContent);
+    final clientExtension =
+        _generateClientExtension(operationName, operationType, operationDoc);
+
+    return '''
+import 'package:graphql/client.dart' as graphql;
+import 'types.dart';
 
 $clientExtension
 ''';

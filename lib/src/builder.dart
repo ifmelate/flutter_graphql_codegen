@@ -13,6 +13,13 @@ class GraphQLCodegenBuilder implements Builder {
   final GraphQLCodegenConfig config;
 
   GraphQLCodegenBuilder(this.config);
+  Future<void> _writeFile(String filePath, String content) async {
+    final directory = Directory(path.dirname(filePath));
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+    }
+    await File(filePath).writeAsString(content);
+  }
 
   @override
   Future<void> build(BuildStep buildStep) async {
@@ -40,21 +47,17 @@ class GraphQLCodegenBuilder implements Builder {
       final operations = parseOperations(documentContent);
 
       for (final operation in operations) {
-        final generatedCode = GraphQLCodeGenerator.generateCode(
+        final operationCode = GraphQLCodeGenerator.generateOperationFile(
           schema,
           documentContent,
           operation.name,
           operation.type,
         );
 
-        final outputFileName = '${operation.name}_graphql.dart';
-        print('Generating graphql client $outputFileName');
+        final outputFileName = '${operation.name.toLowerCase()}_graphql.dart';
+        print('Generating GraphQL client $outputFileName');
         final outputPath = '${config.outputDir}/$outputFileName';
-        final directory = Directory(path.dirname(outputPath));
-        if (!await directory.exists()) {
-          await directory.create(recursive: true);
-        }
-        await File(outputPath).writeAsString(generatedCode);
+        await _writeFile(outputPath, operationCode);
         print('Generated: $outputPath');
       }
     }
