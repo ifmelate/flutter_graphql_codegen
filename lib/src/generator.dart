@@ -110,8 +110,13 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
     for (final field in fields) {
       final fieldName = field.name.value;
       final fieldType = _getDartType(field.type);
-      if (!_builtInScalars.contains(fieldType.replaceAll('?', ''))) {
-        classBuffer.writeln('  @${fieldType.replaceAll('?', '')}Converter()');
+      final baseType = fieldType
+          .replaceAll('?', '')
+          .replaceAll('List<', '')
+          .replaceAll('>', '');
+      if (!_builtInScalars.contains(baseType) &&
+          !_scalarToDartType.containsKey(baseType)) {
+        classBuffer.writeln('  @${baseType}Converter()');
       }
       classBuffer.writeln('  final $fieldType ${fieldName.toCamelCase()};');
     }
@@ -119,8 +124,10 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
     classBuffer.writeln();
     classBuffer.writeln('  $className({');
     for (final field in fields) {
-      classBuffer
-          .writeln('    required this.${field.name.value.toCamelCase()},');
+      final isRequired = field.type.isNonNull;
+      final requiredKeyword = isRequired ? 'required ' : '';
+      classBuffer.writeln(
+          '    ${requiredKeyword}this.${field.name.value.toCamelCase()},');
     }
     classBuffer.writeln('  });');
 
