@@ -2,7 +2,7 @@ targets:
   $default:
     builders:
       flutter_graphql_codegen|graphql_codegen:
-  options:
+    options:
           config_path: graphql_codegen.yaml
 
 builders:
