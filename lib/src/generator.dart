@@ -1,5 +1,3 @@
-import 'package:graphql/graphql.dart';
-
 class GraphQLCodeGenerator {
   static String generateClientCode(String schema, List<String> documents) {
     // This is a simplified version. You'll need to implement the actual code generation logic here.
