@@ -4,6 +4,7 @@ import 'package:gql/language.dart' as gql_lang;
 
 class GraphQLCodeGenerator {
   static Set<String> _customScalars = Set<String>();
+  static Set<String> _enumTypes = Set<String>();
 
   static final Set<String> _builtInScalars = {
     'Int',
@@ -20,9 +21,25 @@ class GraphQLCodeGenerator {
     'ID': 'String',
   };
 
+  static void _extractCustomTypesAndEnums(DocumentNode schemaDoc) {
+    _customScalars.clear();
+    _enumTypes.clear();
+    for (final definition in schemaDoc.definitions) {
+      if (definition is TypeDefinitionNode) {
+        final typeName = definition.name.value;
+        if (definition is ScalarTypeDefinitionNode &&
+            !_builtInScalars.contains(typeName)) {
+          _customScalars.add(typeName);
+        } else if (definition is EnumTypeDefinitionNode) {
+          _enumTypes.add(typeName);
+        }
+      }
+    }
+  }
+
   static String generateTypesFile(String schema) {
     final schemaDoc = gql_lang.parseString(schema);
-    _customScalars = _extractCustomScalars(schemaDoc);
+    _extractCustomTypesAndEnums(schemaDoc);
     final scalarConverters = _generateScalarConverters(_customScalars);
     final enumDefinitions = _generateEnumDefinitions(schemaDoc);
     final enumConverters = _generateEnumConverters(schemaDoc);
@@ -53,18 +70,6 @@ class DecimalConverter implements JsonConverter<Decimal, String> {
 
   @override
   String toJson(Decimal object) => object.toString();
-}
-
-class EnumConverter<T> implements JsonConverter<T, String> {
-  const EnumConverter(this.valueMap);
-
-  final Map<String, T> valueMap;
-
-  @override
-  T fromJson(String json) => valueMap[json]!;
-
-  @override
-  String toJson(T object) => object.toString().split('.').last;
 }
 
 $scalarConverters
@@ -241,9 +246,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
   }
 
   static bool _isEnum(String typeName) {
-    // Здесь вы можете добавить логику для определения, является ли тип перечислением
-    // Например, вы можете проверить, заканчивается ли имя типа на "Enum"
-    return typeName.endsWith('Enum');
+    return _enumTypes.contains(typeName);
   }
 
   static String _getDartType(TypeNode type) {
@@ -301,7 +304,7 @@ ${operationDoc.toString()}
         final selectionSet = definition.selectionSet;
         for (final selection in selectionSet.selections) {
           if (selection is FieldNode) {
-            // Предполагаем, что имя поля верхнего уровня соответствует имени возвращаемого типа
+            // Предполагаем, что имя поля верхнего уровня соответствует имен�� возвращаемого типа
             return '${selection.name.value.capitalize()}Result';
           }
         }
@@ -317,13 +320,24 @@ ${operationDoc.toString()}
       if (definition is EnumTypeDefinitionNode) {
         final enumName = definition.name.value;
         buffer.writeln(
-            'class ${enumName}Converter extends EnumConverter<$enumName> {');
-        buffer.writeln('  const ${enumName}Converter() : super({');
+            'class ${enumName}Converter extends JsonConverter<$enumName, String> {');
+        buffer.writeln('  const ${enumName}Converter();');
+        buffer.writeln();
+        buffer.writeln('  @override');
+        buffer.writeln('  $enumName fromJson(String json) {');
+        buffer.writeln('    switch (json) {');
         for (final value in definition.values) {
           buffer.writeln(
-              "    '${value.name.value}': $enumName.${value.name.value},");
+              "      case '${value.name.value}': return $enumName.${value.name.value};");
         }
-        buffer.writeln('  });');
+        buffer.writeln(
+            "      default: throw Exception('Unknown enum value \$json for $enumName');");
+        buffer.writeln('    }');
+        buffer.writeln('  }');
+        buffer.writeln();
+        buffer.writeln('  @override');
+        buffer.writeln(
+            '  String toJson($enumName object) => object.toString().split(".").last;');
         buffer.writeln('}');
         buffer.writeln();
       }
