@@ -2,11 +2,21 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class SchemaDownloader {
-  static Future<String> downloadSchema(String url) async {
-    final response = await http.get(Uri.parse(url));
+  static Future<String> downloadSchema(String baseUrl) async {
+    final url = Uri.parse(baseUrl).replace(queryParameters: {'sdl': ''});
+
+    final response = await http.get(url);
 
     if (response.statusCode == 200) {
-      return response.body;
+      // Проверяем, начинается ли содержимое с типичных ключевых слов SDL
+      if (response.body.trim().startsWith('type') ||
+          response.body.trim().startsWith('schema') ||
+          response.body.trim().startsWith('directive')) {
+        return response.body;
+      } else {
+        throw FormatException(
+            'Received content does not appear to be a GraphQL SDL.');
+      }
     } else {
       throw Exception(
           'Failed to download schema: ${response.statusCode}. Response: ${response.body}');
