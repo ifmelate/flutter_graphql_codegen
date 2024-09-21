@@ -8,12 +8,12 @@ environment:
 
 # Add regular dependencies here.
 dependencies:
-  path: ^1.8.0
   build: ^2.0.0
   yaml: ^3.1.0
   http: ^1.1.2
   graphql: ^5.0.0
   glob: ^2.1.0
+  gql: ^1.0.0
 
 dev_dependencies:
   lints: ^4.0.0
