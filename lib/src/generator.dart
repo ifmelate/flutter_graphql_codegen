@@ -14,12 +14,8 @@ class GraphQLCodeGenerator {
     return '''
 import 'package:graphql/client.dart';
 
-class ${operationName}GraphQLClient {
-  final GraphQLClient client;
-
-  ${operationName}GraphQLClient(this.client);
-
-  Future<QueryResult<Object?>> execute([Map<String, dynamic>? variables]) async {
+extension ${operationName}Extension on GraphQLClient {
+  Future<QueryResult<Object?>> ${operationName.decapitalize()}([Map<String, dynamic>? variables]) async {
     final options = $optionsType(
       document: gql(r"""
 $documentContent
@@ -27,7 +23,7 @@ $documentContent
       variables: variables ?? const {},
     );
 
-    final result = await client.$methodName(options);
+    final result = await this.$methodName(options);
 
     if (result.hasException) {
       throw result.exception!;
@@ -36,7 +32,10 @@ $documentContent
     return result;
   }
 
-   Future<Map<String, dynamic>?> get data => execute().then((result) => result.data);
+  Future<Map<String, dynamic>?> ${operationName.decapitalize()}Data([Map<String, dynamic>? variables]) async {
+    final result = await ${operationName.decapitalize()}(variables);
+    return result.data;
+  }
 }
 ''';
   }
@@ -45,5 +44,9 @@ $documentContent
 extension StringExtension on String {
   String capitalize() {
     return "${this[0].toUpperCase()}${this.substring(1)}";
+  }
+
+  String decapitalize() {
+    return "${this[0].toLowerCase()}${this.substring(1)}";
   }
 }
