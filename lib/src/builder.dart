@@ -47,7 +47,7 @@ class GraphQLCodegenBuilder implements Builder {
           operation.type,
         );
 
-        final outputFileName = '${operation.name}_graphql_client.dart';
+        final outputFileName = '${operation.name}_graphql.g.dart';
         print('Generating graphql client $outputFileName');
         final outputPath = '${config.outputDir}/$outputFileName';
         final directory = Directory(path.dirname(outputPath));
