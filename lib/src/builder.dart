@@ -32,8 +32,6 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   }
 
   final yamlString = configFile.readAsStringSync();
-  final yamlConfig = yaml.loadYaml(yamlString);
-
-  // Используйте yamlConfig для настройки вашего билдера
-  return GraphQLCodegenBuilder(GraphQLCodegenConfig.fromYaml(yamlConfig));
+  // Передаем строку напрямую, без парсинга
+  return GraphQLCodegenBuilder(GraphQLCodegenConfig.fromYaml(yamlString));
 }
