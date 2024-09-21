@@ -266,6 +266,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         operationType.toLowerCase() == 'mutation' ? 'mutate' : 'query';
     final optionsType = '${operationType.capitalize()}Options';
     final returnType = _getOperationReturnType(operationDoc, schemaDoc);
+    final fieldName = _getOperationFieldName(operationDoc);
 
     return '''
 extension ${operationName}Extension on graphql.GraphQLClient {
@@ -284,7 +285,7 @@ ${operationDoc.toString()}
     }
 
     return graphql.QueryResult(
-      data: result.data != null ? $returnType.fromJson(result.data!) : null,
+      data: result.data != null ? $returnType.fromJson(result.data!['$fieldName']) : null,
       exception: result.exception,
       context: result.context,
     );
@@ -305,8 +306,12 @@ ${operationDoc.toString()}
         final operationType = definition.type.toString().toLowerCase();
         final rootType = _findRootType(schemaDoc, operationType);
         if (rootType != null) {
-          for (final field in rootType.fields) {
-            if (field.name.value == definition.name?.value) {
+          if (definition.selectionSet.selections.isNotEmpty) {
+            final firstSelection = definition.selectionSet.selections.first;
+            if (firstSelection is FieldNode) {
+              final fieldName = firstSelection.name.value;
+              final field =
+                  rootType.fields.firstWhere((f) => f.name.value == fieldName);
               return _getDartType(field.type);
             }
           }
@@ -377,6 +382,20 @@ ${operationDoc.toString()}
     }
 
     return buffer.toString();
+  }
+
+  static String _getOperationFieldName(DocumentNode operationDoc) {
+    for (final definition in operationDoc.definitions) {
+      if (definition is OperationDefinitionNode) {
+        if (definition.selectionSet.selections.isNotEmpty) {
+          final firstSelection = definition.selectionSet.selections.first;
+          if (firstSelection is FieldNode) {
+            return firstSelection.name.value;
+          }
+        }
+      }
+    }
+    return '';
   }
 }
 
