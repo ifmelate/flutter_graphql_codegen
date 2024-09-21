@@ -17,7 +17,7 @@ import 'package:graphql/client.dart';
 extension ${operationName.capitalize()}Extension on GraphQLClient {
   Future<QueryResult<Object?>> ${operationName.decapitalize()}([Map<String, dynamic>? variables]) async {
     final options = $optionsType(
-      document: gql("""
+      document: gql(r"""
 $documentContent
       """),
       variables: variables ?? const {},
