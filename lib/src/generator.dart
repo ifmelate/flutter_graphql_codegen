@@ -161,10 +161,10 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
     final returnType = _getOperationReturnType(operationDoc);
 
     return '''
-extension ${operationName}Extension on GraphQLClient {
-  Future<QueryResult<$returnType>> ${operationName.decapitalize()}([Map<String, dynamic>? variables]) async {
-    final options = $optionsType(
-      document: gql(r"""
+extension ${operationName}Extension on graphql.GraphQLClient {
+  Future<graphql.QueryResult<$returnType>> ${operationName.decapitalize()}([Map<String, dynamic>? variables]) async {
+    final options = graphql.$optionsType(
+      document: graphql.gql(r"""
 ${operationDoc.toString()}
       """),
       variables: variables ?? const {},
@@ -176,7 +176,7 @@ ${operationDoc.toString()}
       throw result.exception!;
     }
 
-    return QueryResult(
+    return graphql.QueryResult(
       data: result.data != null ? $returnType.fromJson(result.data!) : null,
       exception: result.exception,
       context: result.context,
@@ -192,8 +192,17 @@ ${operationDoc.toString()}
   }
 
   static String _getOperationReturnType(DocumentNode operationDoc) {
-    // This is a placeholder. You'll need to implement the logic to determine the return type
-    // based on the operation and schema.
+    for (final definition in operationDoc.definitions) {
+      if (definition is OperationDefinitionNode) {
+        final selectionSet = definition.selectionSet;
+        for (final selection in selectionSet.selections) {
+          if (selection is FieldNode) {
+            // Предполагаем, что имя поля верхнего уровня соответствует имени возвращаемого типа
+            return '${selection.name.value.capitalize()}Result';
+          }
+        }
+      }
+    }
     return 'dynamic';
   }
 }
