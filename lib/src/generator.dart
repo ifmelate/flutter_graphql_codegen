@@ -14,16 +14,16 @@ class GraphQLCodeGenerator {
     return '''
 import 'package:graphql/client.dart';
 
-extension ${operationName}Extension on GraphQLClient {
+extension ${operationName.capitalize()}Extension on GraphQLClient {
   Future<QueryResult<Object?>> ${operationName.decapitalize()}([Map<String, dynamic>? variables]) async {
     final options = $optionsType(
-      document: gql(r"""
+      document: gql("""
 $documentContent
       """),
       variables: variables ?? const {},
     );
 
-    final result = await this.$methodName(options);
+    final result = await $methodName(options);
 
     if (result.hasException) {
       throw result.exception!;
