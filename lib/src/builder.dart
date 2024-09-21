@@ -33,9 +33,12 @@ class GraphQLCodegenBuilder implements Builder {
     final schema = await SchemaDownloader.downloadSchema(schemaUrl);
     print('Graphql Schema downloaded from $schemaUrl');
 
-    /* final generatedCode =
-        GraphQLCodeGenerator.generateClientCode(schema, documents);
-        */
+    // Generate types file
+    final typesCode = GraphQLCodeGenerator.generateTypesFile(schema);
+    final typesOutputPath = '${config.outputDir}/types.dart';
+    await _writeFile(typesOutputPath, typesCode);
+    print('Generated types file: $typesOutputPath');
+
     // Process each document
     final documentPaths = await _resolveDocumentPaths(config.documentPaths);
     print('Found ${documentPaths.length} Graphql Documents');
