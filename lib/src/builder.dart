@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:build/build.dart';
 import 'package:flutter_graphql_codegen/src/generator.dart';
+import 'package:flutter_graphql_codegen/src/schema_downloader.dart';
 import 'config.dart';
 import 'package:yaml/yaml.dart' as yaml;
 
@@ -14,9 +15,13 @@ class GraphQLCodegenBuilder implements Builder {
   Future<void> build(BuildStep buildStep) async {
     final inputId = buildStep.inputId;
     List<String> documents = [];
+    print('BuildStep of graphql codegen: ${buildStep.inputId}');
     if (inputId.extension == '.schema.graphql') {
       // This is the schema file
-      final schema = await buildStep.readAsString(inputId);
+      final schemaUrl = await buildStep.readAsString(inputId);
+      print('Downloading schema from $schemaUrl');
+      final schema = await SchemaDownloader.downloadSchema(schemaUrl);
+      print('Graphql Schema downloaded from ${schemaUrl}');
       final documentPaths = config.resolveDocumentPaths();
       documents = await Future.wait(
           documentPaths.map((path) => File(path).readAsString()));
@@ -27,6 +32,7 @@ class GraphQLCodegenBuilder implements Builder {
       await buildStep.writeAsString(outputId, generatedCode);
     } else if (inputId.extension == '.graphql') {
       // This is a document file
+      print('Reading document from ${inputId}');
       final document = await buildStep.readAsString(inputId);
       documents.add(document);
       // We don't generate individual files for documents in this setup
