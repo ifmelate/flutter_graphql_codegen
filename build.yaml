@@ -1,7 +1,13 @@
 builders:
   graphql_codegen:
     import: "package:flutter_graphql_codegen/flutter_graphql_codegen.dart"
-    builder_factories: ["GraphQLCodegenBuilder"]
+    builder_factories: ["graphqlCodegenBuilder"]
     build_extensions: {".dart": [".graphql.dart"]}
-    auto_apply: root_package
+    auto_apply: dependents
     build_to: source
+    defaults:
+      options:
+        graphql_codegen: |
+          # Здесь могут быть указаны значения по умолчанию, если они нужны
+          # schema_url: ""
+          # output_dir: "lib/generated"
