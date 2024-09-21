@@ -108,7 +108,8 @@ class SchemaDownloader {
     if (response.statusCode == 200) {
       final jsonResponse = json.decode(response.body);
       if (jsonResponse['errors'] != null) {
-        throw Exception('GraphQL errors: ${jsonResponse['errors']}');
+        throw Exception(
+            'Failed to download schema: ${response.statusCode}. Errors: ${jsonResponse['errors']}');
       }
       return json.encode(jsonResponse['data']);
     } else {
