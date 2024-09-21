@@ -3,6 +3,18 @@ import 'dart:convert';
 
 class SchemaDownloader {
   static Future<String> downloadSchema(String url) async {
+    final response = await http.get(Uri.parse(url));
+
+    if (response.statusCode == 200) {
+      return response.body;
+    } else {
+      throw Exception(
+          'Failed to download schema: ${response.statusCode}. Response: ${response.body}');
+    }
+  }
+
+  static Future<String> downloadSchemaUsingIntrospectionQuery(
+      String url) async {
     final introspectionQuery = '''
       query IntrospectionQuery {
         __schema {
