@@ -17,7 +17,7 @@ class GraphQLCodeGenerator {
         _generateClientExtension(operationName, operationType, operationDoc);
 
     return '''
-import 'package:graphql/client.dart';
+import 'package:graphql/client.dart' as graphql;
 import 'package:json_annotation/json_annotation.dart';
 
 part '${operationName.toLowerCase()}.g.dart';
