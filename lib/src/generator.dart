@@ -1,4 +1,3 @@
-import 'package:graphql/client.dart';
 import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 
@@ -106,8 +105,8 @@ $typeDefinitions
     final customScalars = _extractCustomScalars(schemaDoc);
     final scalarConverters = _generateScalarConverters(customScalars);
     final typeDefinitions = _generateTypeDefinitions(schemaDoc);
-    final clientExtension =
-        _generateClientExtension(operationName, operationType, operationDoc);
+    final clientExtension = _generateClientExtension(
+        operationName, operationType, operationDoc, schemaDoc);
 
     return '''
 import 'package:graphql/client.dart' as graphql;
@@ -129,9 +128,10 @@ $clientExtension
     String operationName,
     String operationType,
   ) {
+    final schemaDoc = gql_lang.parseString(schema);
     final operationDoc = gql_lang.parseString(documentContent);
-    final clientExtension =
-        _generateClientExtension(operationName, operationType, operationDoc);
+    final clientExtension = _generateClientExtension(
+        operationName, operationType, operationDoc, schemaDoc);
 
     return '''
 import 'package:graphql/client.dart' as graphql;
@@ -260,12 +260,12 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
     return 'dynamic';
   }
 
-  static String _generateClientExtension(
-      String operationName, String operationType, DocumentNode operationDoc) {
+  static String _generateClientExtension(String operationName,
+      String operationType, DocumentNode operationDoc, DocumentNode schemaDoc) {
     final methodName =
         operationType.toLowerCase() == 'mutation' ? 'mutate' : 'query';
     final optionsType = '${operationType.capitalize()}Options';
-    final returnType = _getOperationReturnType(operationDoc);
+    final returnType = _getOperationReturnType(operationDoc, schemaDoc);
 
     return '''
 extension ${operationName}Extension on graphql.GraphQLClient {
@@ -298,19 +298,34 @@ ${operationDoc.toString()}
 ''';
   }
 
-  static String _getOperationReturnType(DocumentNode operationDoc) {
+  static String _getOperationReturnType(
+      DocumentNode operationDoc, DocumentNode schemaDoc) {
     for (final definition in operationDoc.definitions) {
       if (definition is OperationDefinitionNode) {
-        final selectionSet = definition.selectionSet;
-        for (final selection in selectionSet.selections) {
-          if (selection is FieldNode) {
-            // Предполагаем, что имя поля верхнего уровня соответствует имен�� возвращаемого типа
-            return '${selection.name.value.capitalize()}Result';
+        final operationType = definition.type.toString().toLowerCase();
+        final rootType = _findRootType(schemaDoc, operationType);
+        if (rootType != null) {
+          for (final field in rootType.fields) {
+            if (field.name.value == definition.name?.value) {
+              return _getDartType(field.type);
+            }
           }
         }
       }
     }
     return 'dynamic';
+  }
+
+  static ObjectTypeDefinitionNode? _findRootType(
+      DocumentNode schemaDoc, String operationType) {
+    for (final definition in schemaDoc.definitions) {
+      if (definition is ObjectTypeDefinitionNode) {
+        if (definition.name.value.toLowerCase() == operationType) {
+          return definition;
+        }
+      }
+    }
+    return null;
   }
 
   static String _generateEnumConverters(DocumentNode schemaDoc) {
