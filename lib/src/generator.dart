@@ -331,8 +331,17 @@ ${operationDoc.toString()}
             if (firstSelection is FieldNode) {
               final fieldName = firstSelection.name.value;
               print('Field name: $fieldName');
-              final field =
-                  rootType.fields.firstWhere((f) => f.name.value == fieldName);
+              final field = rootType.fields.firstWhere(
+                (f) => f.name.value == fieldName,
+                orElse: () => throw StateError('Field not found: $fieldName'),
+              );
+
+              if (field == null) {
+                print(
+                    'Warning: Field $fieldName not found in root type ${rootType.name.value}');
+                return 'dynamic';
+              }
+
               final schemaType = _getSchemaType(field.type);
               print('Schema type: $schemaType');
               final dartType =
@@ -350,36 +359,37 @@ ${operationDoc.toString()}
       }
     }
     print('Unable to determine return type for operation');
-    throw Exception('Unable to determine return type for operation');
+    return 'dynamic';
   }
 
   static ObjectTypeDefinitionNode? _findRootType(
       DocumentNode schemaDoc, String operationType) {
     print('Entering _findRootType');
     print('Operation type: $operationType');
+
+    // First, try to find the root type through SchemaDefinitionNode
     for (final definition in schemaDoc.definitions) {
-      print('Processing definition: ${definition.runtimeType}');
       if (definition is SchemaDefinitionNode) {
-        print('Found SchemaDefinitionNode');
         for (final operationTypeDefinition in definition.operationTypes) {
-          print(
-              'Checking operation type: ${operationTypeDefinition.operation.name}');
           if (operationTypeDefinition.operation.name == operationType) {
             final typeName = operationTypeDefinition.type.name.value;
-            print('Found matching operation type: $typeName');
-            final rootType = schemaDoc.definitions.firstWhere(
+            return schemaDoc.definitions.firstWhere(
               (def) =>
                   def is ObjectTypeDefinitionNode && def.name.value == typeName,
-              orElse: () => ObjectTypeDefinitionNode(
-                  name: NameNode(value: 'Unknown'), fields: []),
-            );
-            return rootType is ObjectTypeDefinitionNode ? rootType : null;
+              orElse: () => throw StateError('Type not found: $typeName'),
+            ) as ObjectTypeDefinitionNode?;
           }
         }
       }
     }
-    print('Root type not found for operation type: $operationType');
-    return null;
+
+    // If not found, look for a type named 'Query', 'Mutation', or 'Subscription'
+    final rootTypeName = operationType.capitalize();
+    return schemaDoc.definitions.firstWhere(
+      (def) =>
+          def is ObjectTypeDefinitionNode && def.name.value == rootTypeName,
+      orElse: () => throw StateError('Root type not found: $rootTypeName'),
+    ) as ObjectTypeDefinitionNode?;
   }
 
   static String _getSchemaType(TypeNode type) {
