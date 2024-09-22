@@ -295,7 +295,7 @@ ${operationDoc.toString()}
 
     return graphql.QueryResult<$returnType>(
       options: options,
-      data: result.data != null ? $returnType.fromJson(result.data!['$fieldName'] as Map<String, dynamic>) : null,
+      data: result.data != null ? result.data!['$fieldName'] as Map<String, dynamic>? : null,
       exception: result.exception,
       context: result.context,
       source: result.source ?? graphql.QueryResultSource.network,
@@ -304,7 +304,7 @@ ${operationDoc.toString()}
 
   Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     final result = await ${operationName.toCamelCase()}(variables);
-    return result.data!;
+    return $returnType.fromJson(result.data!['$fieldName'] as Map<String, dynamic>);
   }
 }
 ''';
