@@ -46,26 +46,44 @@ class GraphQLCodeGenerator {
 
     return '''
 import 'package:json_annotation/json_annotation.dart';
-import 'package:intl/intl.dart';
-import 'package:decimal/decimal.dart';
 
 part 'types.g.dart';
+
+class DateTime {
+  final String value;
+  DateTime(this.value);
+
+  @override
+  String toString() => value;
+
+  static DateTime parse(String value) => DateTime(value);
+}
 
 class DateTimeConverter implements JsonConverter<DateTime, String> {
   const DateTimeConverter();
 
   @override
-  DateTime fromJson(String json) => DateTime.parse(json);
+  DateTime fromJson(String json) => DateTime(json);
 
   @override
-  String toJson(DateTime object) => object.toIso8601String();
+  String toJson(DateTime object) => object.toString();
+}
+
+class Decimal {
+  final String value;
+  Decimal(this.value);
+
+  @override
+  String toString() => value;
+
+  static Decimal parse(String value) => Decimal(value);
 }
 
 class DecimalConverter implements JsonConverter<Decimal, String> {
   const DecimalConverter();
 
   @override
-  Decimal fromJson(String json) => Decimal.parse(json);
+  Decimal fromJson(String json) => Decimal(json);
 
   @override
   String toJson(Decimal object) => object.toString();
@@ -454,6 +472,10 @@ ${operationDoc.toString()}
         return isNullable ? 'bool?' : 'bool';
       case 'ID':
         return isNullable ? 'String?' : 'String';
+      case 'DateTime':
+        return isNullable ? 'DateTime?' : 'DateTime';
+      case 'Decimal':
+        return isNullable ? 'Decimal?' : 'Decimal';
       default:
         if (definedTypes.contains(baseType) ||
             _customScalars.contains(baseType) ||
