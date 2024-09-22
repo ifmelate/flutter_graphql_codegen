@@ -324,15 +324,22 @@ ${operationDoc.toString()}
               final field =
                   rootType.fields.firstWhere((f) => f.name.value == fieldName);
               final schemaType = _getSchemaType(field.type);
+              final dartType =
+                  _mapSchemaTypeToDartType(schemaType, definedTypes);
 
-              // Сопоставляем тип из схемы с типом в types.dart
-              return _mapSchemaTypeToDartType(schemaType, definedTypes);
+              // Если тип определен в types.dart, используем его
+              if (definedTypes.contains(dartType)) {
+                return dartType;
+              }
+
+              // Иначе используем тип из схемы
+              return schemaType;
             }
           }
         }
       }
     }
-    return 'dynamic';
+    throw Exception('Unable to determine return type for operation');
   }
 
   static String _getSchemaType(TypeNode type) {
@@ -361,9 +368,12 @@ ${operationDoc.toString()}
       return isNullable ? '$baseType?' : baseType;
     } else if (definedTypes.contains(baseType)) {
       return isNullable ? '$baseType?' : baseType;
+    } else if (definedTypes.contains('${baseType}Model')) {
+      // Проверяем, есть ли тип с суффиксом 'Model'
+      return isNullable ? '${baseType}Model?' : '${baseType}Model';
     }
 
-    return 'dynamic';
+    throw Exception('Unknown type: $schemaType');
   }
 
   static bool _isScalarType(String typeName) {
