@@ -49,26 +49,6 @@ import 'package:json_annotation/json_annotation.dart';
 
 part 'types.g.dart';
 
-class DateTime {
-  final String value;
-  DateTime(this.value);
-
-  @override
-  String toString() => value;
-
-  static DateTime parse(String value) => DateTime(value);
-}
-
-class DateTimeConverter implements JsonConverter<DateTime, String> {
-  const DateTimeConverter();
-
-  @override
-  DateTime fromJson(String json) => DateTime(json);
-
-  @override
-  String toJson(DateTime object) => object.toString();
-}
-
 class Decimal {
   final String value;
   Decimal(this.value);
@@ -179,8 +159,32 @@ $clientExtension
 
   static String _generateScalarConverters(Set<String> customScalars) {
     final buffer = StringBuffer();
+
+    buffer.writeln('''
+class DateTime {
+  final String value;
+  DateTime(this.value);
+
+  @override
+  String toString() => value;
+
+  static DateTime parse(String value) => DateTime(value);
+}
+
+class DateTimeConverter implements JsonConverter<DateTime, String> {
+  const DateTimeConverter();
+
+  @override
+  DateTime fromJson(String json) => DateTime(json);
+
+  @override
+  String toJson(DateTime object) => object.toString();
+}
+''');
+
     for (final scalar in customScalars) {
-      buffer.writeln('''
+      if (scalar != 'DateTime') {
+        buffer.writeln('''
 class $scalar {
   final String value;
   $scalar(this.value);
@@ -199,6 +203,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
   String toJson($scalar object) => object.toString();
 }
 ''');
+      }
     }
     return buffer.toString();
   }
