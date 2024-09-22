@@ -327,12 +327,10 @@ ${operationDoc.toString()}
               final dartType =
                   _mapSchemaTypeToDartType(schemaType, definedTypes);
 
-              // Если тип определен в types.dart, используем его
               if (definedTypes.contains(dartType)) {
                 return dartType;
               }
 
-              // Иначе используем тип из схемы
               return schemaType;
             }
           }
@@ -368,12 +366,14 @@ ${operationDoc.toString()}
       return isNullable ? '$baseType?' : baseType;
     } else if (definedTypes.contains(baseType)) {
       return isNullable ? '$baseType?' : baseType;
-    } else if (definedTypes.contains('${baseType}Model')) {
-      // Проверяем, есть ли тип с суффиксом 'Model'
-      return isNullable ? '${baseType}Model?' : '${baseType}Model';
+    } else if (_customScalars.contains(baseType)) {
+      return isNullable ? '$baseType?' : baseType;
+    } else if (_enumTypes.contains(baseType)) {
+      return isNullable ? '$baseType?' : baseType;
     }
 
-    throw Exception('Unknown type: $schemaType');
+    print('Warning: Unknown type $baseType');
+    return isNullable ? '$baseType?' : baseType;
   }
 
   static bool _isScalarType(String typeName) {
