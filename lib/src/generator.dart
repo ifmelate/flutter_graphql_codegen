@@ -367,7 +367,13 @@ ${operationDoc.toString()}
     print('Entering _findRootType');
     print('Operation type: $operationType');
 
-    // First, try to find the root type through SchemaDefinitionNode
+    operationType = operationType.toLowerCase();
+    if (operationType == 'operationtype.mutation') {
+      operationType = 'mutation';
+    } else if (operationType == 'operationtype.query') {
+      operationType = 'query';
+    }
+
     for (final definition in schemaDoc.definitions) {
       if (definition is SchemaDefinitionNode) {
         for (final operationTypeDefinition in definition.operationTypes) {
@@ -383,7 +389,6 @@ ${operationDoc.toString()}
       }
     }
 
-    // If not found, look for a type named 'Query', 'Mutation', or 'Subscription'
     final rootTypeName = operationType.capitalize();
     return schemaDoc.definitions.firstWhere(
       (def) =>
