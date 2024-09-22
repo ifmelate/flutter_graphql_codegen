@@ -304,7 +304,7 @@ ${operationDoc.toString()}
 
   Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     final result = await ${operationName.toCamelCase()}(variables);
-    return ${_generateReturnStatement(returnType, fieldName)};
+    ${_generateReturnStatement(returnType, fieldName)};
   }
 }
 ''';
