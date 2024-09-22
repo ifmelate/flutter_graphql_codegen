@@ -279,7 +279,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
 
     return '''
 extension ${operationName}Extension on graphql.GraphQLClient {
-  Future<graphql.QueryResult<$returnType?>> ${operationName.toCamelCase()}([Map<String, dynamic>? variables]) async {
+  Future<graphql.QueryResult<$returnType>> ${operationName.toCamelCase()}([Map<String, dynamic>? variables]) async {
     final options = graphql.$optionsType(
       document: graphql.gql(r"""
 ${operationDoc.toString()}
@@ -302,7 +302,7 @@ ${operationDoc.toString()}
     );
   }
 
-  Future<$returnType?> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
+  Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     final result = await ${operationName.toCamelCase()}(variables);
     return result.data != null ? $returnType.fromJson(result.data!) : null;
   }
