@@ -312,31 +312,43 @@ ${operationDoc.toString()}
 
   static String _getOperationReturnType(DocumentNode operationDoc,
       DocumentNode schemaDoc, Set<String> definedTypes) {
+    print('Entering _getOperationReturnType');
+    print('Operation document: ${operationDoc.toString()}');
+    print('Schema document: ${schemaDoc.toString()}');
+    print('Defined types: $definedTypes');
+
     for (final definition in operationDoc.definitions) {
+      print('Processing definition: ${definition.runtimeType}');
       if (definition is OperationDefinitionNode) {
         final operationType = definition.type.toString().toLowerCase();
+        print('Operation type: $operationType');
         final rootType = _findRootType(schemaDoc, operationType);
+        print('Root type: ${rootType?.name.value}');
         if (rootType != null) {
           if (definition.selectionSet.selections.isNotEmpty) {
             final firstSelection = definition.selectionSet.selections.first;
+            print('First selection: ${firstSelection.runtimeType}');
             if (firstSelection is FieldNode) {
               final fieldName = firstSelection.name.value;
+              print('Field name: $fieldName');
               final field =
                   rootType.fields.firstWhere((f) => f.name.value == fieldName);
               final schemaType = _getSchemaType(field.type);
+              print('Schema type: $schemaType');
               final dartType =
                   _mapSchemaTypeToDartType(schemaType, definedTypes);
-
-              if (definedTypes.contains(dartType)) {
-                return dartType;
-              }
-
-              return schemaType;
+              print('Dart type: $dartType');
+              return dartType;
             }
+          } else {
+            print('Selection set is empty');
           }
+        } else {
+          print('Root type is null');
         }
       }
     }
+    print('Unable to determine return type for operation');
     throw Exception('Unable to determine return type for operation');
   }
 
@@ -372,6 +384,7 @@ ${operationDoc.toString()}
       return isNullable ? '$baseType?' : baseType;
     }
 
+    // If type is not found, return it as is
     print('Warning: Unknown type $baseType');
     return isNullable ? '$baseType?' : baseType;
   }
