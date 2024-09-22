@@ -344,12 +344,42 @@ ${operationDoc.toString()}
             print('Selection set is empty');
           }
         } else {
-          print('Root type is null');
+          print('Root type is null, falling back to dynamic');
+          return 'dynamic';
         }
       }
     }
     print('Unable to determine return type for operation');
     throw Exception('Unable to determine return type for operation');
+  }
+
+  static ObjectTypeDefinitionNode? _findRootType(
+      DocumentNode schemaDoc, String operationType) {
+    print('Entering _findRootType');
+    print('Operation type: $operationType');
+    for (final definition in schemaDoc.definitions) {
+      print('Processing definition: ${definition.runtimeType}');
+      if (definition is SchemaDefinitionNode) {
+        print('Found SchemaDefinitionNode');
+        for (final operationTypeDefinition in definition.operationTypes) {
+          print(
+              'Checking operation type: ${operationTypeDefinition.operation.name}');
+          if (operationTypeDefinition.operation.name == operationType) {
+            final typeName = operationTypeDefinition.type.name.value;
+            print('Found matching operation type: $typeName');
+            final rootType = schemaDoc.definitions.firstWhere(
+              (def) =>
+                  def is ObjectTypeDefinitionNode && def.name.value == typeName,
+              orElse: () => ObjectTypeDefinitionNode(
+                  name: NameNode(value: 'Unknown'), fields: []),
+            );
+            return rootType is ObjectTypeDefinitionNode ? rootType : null;
+          }
+        }
+      }
+    }
+    print('Root type not found for operation type: $operationType');
+    return null;
   }
 
   static String _getSchemaType(TypeNode type) {
@@ -401,18 +431,6 @@ ${operationDoc.toString()}
       ...GraphQLCodeGenerator._customScalars
     ];
     return scalarTypes.contains(typeName);
-  }
-
-  static ObjectTypeDefinitionNode? _findRootType(
-      DocumentNode schemaDoc, String operationType) {
-    for (final definition in schemaDoc.definitions) {
-      if (definition is ObjectTypeDefinitionNode) {
-        if (definition.name.value.toLowerCase() == operationType) {
-          return definition;
-        }
-      }
-    }
-    return null;
   }
 
   static String _generateEnumConverters(DocumentNode schemaDoc) {
