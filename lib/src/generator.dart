@@ -419,19 +419,26 @@ ${operationDoc.toString()}
       return isNullable ? 'List<$mappedInnerType>?' : 'List<$mappedInnerType>';
     }
 
-    if (_isScalarType(baseType)) {
-      return isNullable ? '$baseType?' : baseType;
-    } else if (definedTypes.contains(baseType)) {
-      return isNullable ? '$baseType?' : baseType;
-    } else if (_customScalars.contains(baseType)) {
-      return isNullable ? '$baseType?' : baseType;
-    } else if (_enumTypes.contains(baseType)) {
-      return isNullable ? '$baseType?' : baseType;
+    switch (baseType) {
+      case 'Int':
+        return isNullable ? 'int?' : 'int';
+      case 'Float':
+        return isNullable ? 'double?' : 'double';
+      case 'String':
+        return isNullable ? 'String?' : 'String';
+      case 'Boolean':
+        return isNullable ? 'bool?' : 'bool';
+      case 'ID':
+        return isNullable ? 'String?' : 'String';
+      default:
+        if (definedTypes.contains(baseType) ||
+            _customScalars.contains(baseType) ||
+            _enumTypes.contains(baseType)) {
+          return isNullable ? '$baseType?' : baseType;
+        }
+        print('Warning: Unknown type $baseType');
+        return isNullable ? 'dynamic?' : 'dynamic';
     }
-
-    // If type is not found, return it as is
-    print('Warning: Unknown type $baseType');
-    return isNullable ? '$baseType?' : baseType;
   }
 
   static bool _isScalarType(String typeName) {
