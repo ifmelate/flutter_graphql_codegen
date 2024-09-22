@@ -298,7 +298,7 @@ ${operationDoc.toString()}
       data: result.data != null ? $returnType.fromJson(result.data!['$fieldName'] as Map<String, dynamic>) : null,
       exception: result.exception,
       context: result.context,
-      source: result.source,
+      source: result.source ?? graphql.QueryResultSource.network,
     );
   }
 
