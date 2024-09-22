@@ -302,9 +302,9 @@ ${operationDoc.toString()}
     );
   }
 
-  Future<$returnType?> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
+  Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     final result = await ${operationName.toCamelCase()}(variables);
-    return result.data;
+    return result.data!;
   }
 }
 ''';
