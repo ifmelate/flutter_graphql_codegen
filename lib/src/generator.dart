@@ -304,16 +304,25 @@ ${operationDoc.toString()}
 
   Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     final result = await ${operationName.toCamelCase()}(variables);
-    ${_generateReturnStatement(returnType, fieldName)};
+    ${_generateReturnStatement(returnType, fieldName)}
   }
 }
 ''';
   }
 
   static String _generateReturnStatement(String returnType, String fieldName) {
-    if (returnType == 'bool' || returnType == 'bool?') {
-      return 'return result.data!["$fieldName"] as $returnType;';
-    } else if (returnType == 'int' ||
+    if (returnType.startsWith('List<') && returnType.endsWith('>?')) {
+      final innerType = returnType.substring(5, returnType.length - 2);
+      return '''
+      if (result.data != null && result.data!['$fieldName'] != null) {
+        final list = result.data!['$fieldName'] as List<dynamic>;
+        return list.map((e) => $innerType.fromJson(e as Map<String, dynamic>)).toList();
+      }
+      return null;
+      ''';
+    } else if (returnType == 'bool' ||
+        returnType == 'bool?' ||
+        returnType == 'int' ||
         returnType == 'int?' ||
         returnType == 'double' ||
         returnType == 'double?' ||
