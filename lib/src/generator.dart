@@ -383,6 +383,8 @@ ${operationDoc.toString()}
       'String',
       'Boolean',
       'ID',
+      'DateTime',
+      'Decimal',
       ...GraphQLCodeGenerator._customScalars
     ];
     return scalarTypes.contains(typeName);
@@ -498,6 +500,21 @@ ${operationDoc.toString()}
     for (final field in fields) {
       final fieldName = field.name.value;
       final fieldType = _getDartType(field.type);
+      final baseType = fieldType
+          .replaceAll('?', '')
+          .replaceAll('List<', '')
+          .replaceAll('>', '');
+
+      if (baseType == 'DateTime') {
+        buffer.writeln('  @DateTimeConverter()');
+      } else if (baseType == 'Decimal') {
+        buffer.writeln('  @DecimalConverter()');
+      } else if (_isEnum(baseType)) {
+        buffer.writeln('  @${baseType}Converter()');
+      } else if (_customScalars.contains(baseType)) {
+        buffer.writeln('  @${baseType}Converter()');
+      }
+
       buffer.writeln('  final $fieldType $fieldName;');
     }
 
