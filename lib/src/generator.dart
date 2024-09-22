@@ -304,10 +304,25 @@ ${operationDoc.toString()}
 
   Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     final result = await ${operationName.toCamelCase()}(variables);
-    return $returnType.fromJson(result.data!['$fieldName'] as Map<String, dynamic>);
+    return ${_generateReturnStatement(returnType, fieldName)};
   }
 }
 ''';
+  }
+
+  static String _generateReturnStatement(String returnType, String fieldName) {
+    if (returnType == 'bool' || returnType == 'bool?') {
+      return 'return result.data!["$fieldName"] as $returnType;';
+    } else if (returnType == 'int' ||
+        returnType == 'int?' ||
+        returnType == 'double' ||
+        returnType == 'double?' ||
+        returnType == 'String' ||
+        returnType == 'String?') {
+      return 'return result.data!["$fieldName"] as $returnType;';
+    } else {
+      return 'return $returnType.fromJson(result.data!["$fieldName"] as Map<String, dynamic>);';
+    }
   }
 
   static String _getOperationReturnType(DocumentNode operationDoc,
