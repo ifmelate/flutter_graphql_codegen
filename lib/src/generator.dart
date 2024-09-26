@@ -319,7 +319,7 @@ $operationDocumentContent
 
     return graphql.QueryResult<$returnType>(
       options: options,
-      data: result.data != null ? result.data!['$fieldName'] as Map<String, dynamic>? : null,
+      data: result.data != null ? result.data!['$fieldName'] as $returnType : null,
       exception: result.exception,
       context: result.context,
       source: result.source ?? graphql.QueryResultSource.network,
@@ -334,8 +334,7 @@ $operationDocumentContent
         throw Exception("Error: result.data is null");
       }
 
-      final ${fieldName}Data = result.data as Map<String, dynamic>;
-      return $returnType.fromJson(${fieldName}Data);
+      ${_generateReturnStatement(returnType, fieldName)}
     } catch (e) {
       throw Exception("An error occurred while fetching data: \$e");
     }
@@ -345,16 +344,7 @@ $operationDocumentContent
   }
 
   static String _generateReturnStatement(String returnType, String fieldName) {
-    if (returnType.startsWith('List<') && returnType.endsWith('>?')) {
-      final innerType = returnType.substring(5, returnType.length - 2);
-      return '''
-      if (result.data != null && result.data!['$fieldName'] != null) {
-        final list = result.data!['$fieldName'] as List<dynamic>;
-        return list.map((e) => $innerType.fromJson(e as Map<String, dynamic>)).toList();
-      }
-      return null;
-      ''';
-    } else if (returnType == 'bool' ||
+    if (returnType == 'bool' ||
         returnType == 'bool?' ||
         returnType == 'int' ||
         returnType == 'int?' ||
@@ -363,6 +353,12 @@ $operationDocumentContent
         returnType == 'String' ||
         returnType == 'String?') {
       return 'return result.data!["$fieldName"] as $returnType;';
+    } else if (returnType.startsWith('List<') && returnType.endsWith('>')) {
+      final innerType = returnType.substring(5, returnType.length - 1);
+      return '''
+        final list = result.data!['$fieldName'] as List;
+        return list.map((e) => $innerType.fromJson(e as Map<String, dynamic>)).toList();
+      ''';
     } else {
       return 'return $returnType.fromJson(result.data!["$fieldName"] as Map<String, dynamic>);';
     }
