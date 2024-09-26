@@ -99,14 +99,13 @@ $typeDefinitions
     String typesContent,
   ) {
     final schemaDoc = gql_lang.parseString(schema);
-    final operationDoc = gql_lang.parseString(documentContent);
 
     final customScalars = _extractCustomScalars(schemaDoc);
     final scalarConverters = _generateScalarConverters(customScalars);
     final typeDefinitions = _generateTypeDefinitions(schemaDoc);
     final definedTypes = extractDefinedTypes(typesContent);
     final clientExtension = _generateClientExtension(
-        operationName, operationType, operationDoc, schemaDoc, definedTypes);
+        operationName, operationType, documentContent, schemaDoc, definedTypes);
 
     return '''
 import 'package:graphql/client.dart' as graphql;
@@ -130,10 +129,10 @@ $clientExtension
     String typesContent,
   ) {
     final schemaDoc = gql_lang.parseString(schema);
-    final operationDoc = gql_lang.parseString(documentContent);
+
     final definedTypes = extractDefinedTypes(typesContent);
     final clientExtension = _generateClientExtension(
-        operationName, operationType, operationDoc, schemaDoc, definedTypes);
+        operationName, operationType, documentContent, schemaDoc, definedTypes);
 
     return '''
 import 'package:graphql/client.dart' as graphql;
@@ -290,12 +289,14 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
   static String _generateClientExtension(
       String operationName,
       String operationType,
-      DocumentNode operationDoc,
+      String operationDocumentContent,
       DocumentNode schemaDoc,
       Set<String> definedTypes) {
     final methodName =
         operationType.toLowerCase() == 'mutation' ? 'mutate' : 'query';
     final optionsType = '${operationType.capitalize()}Options';
+    final operationDoc = gql_lang.parseString(operationDocumentContent);
+
     final returnType =
         _getOperationReturnType(operationDoc, schemaDoc, definedTypes);
     final fieldName = _getOperationFieldName(operationDoc);
@@ -305,7 +306,7 @@ extension ${operationName}Extension on graphql.GraphQLClient {
   Future<graphql.QueryResult<$returnType>> ${operationName.toCamelCase()}([Map<String, dynamic>? variables]) async {
     final options = graphql.$optionsType<$returnType>(
       document: graphql.gql(r"""
-${operationDoc.toString()}
+$operationDocumentContent
       """),
       variables: variables ?? const {},
     );
