@@ -319,46 +319,23 @@ $operationDocumentContent
 
     return graphql.QueryResult<$returnType>(
       options: options,
-      data: result.data != null ? ${_generateDataExtraction(returnType, fieldName)} : null,
+      data: result.data?['$fieldName'] as $returnType?,
       exception: result.exception,
       context: result.context,
       source: result.source ?? graphql.QueryResultSource.network,
     );
   }
 
-  Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
+  Future<$returnType?> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     try {
       final result = await ${operationName.toCamelCase()}(variables);
-
-      if (result.data == null) {
-        throw Exception("Error: result.data is null");
-      }
-
-      return result.data!;
+      return result.data;
     } catch (e) {
       throw Exception("An error occurred while fetching data: \$e");
     }
   }
 }
 ''';
-  }
-
-  static String _generateDataExtraction(String returnType, String fieldName) {
-    if (returnType == 'bool' ||
-        returnType == 'bool?' ||
-        returnType == 'int' ||
-        returnType == 'int?' ||
-        returnType == 'double' ||
-        returnType == 'double?' ||
-        returnType == 'String' ||
-        returnType == 'String?') {
-      return 'result.data!["$fieldName"] as $returnType';
-    } else if (returnType.startsWith('List<') && returnType.endsWith('>')) {
-      final innerType = returnType.substring(5, returnType.length - 1);
-      return '(result.data!["$fieldName"] as List).map((e) => $innerType.fromJson(e as Map<String, dynamic>)).toList()';
-    } else {
-      return '$returnType.fromJson(result.data!["$fieldName"] as Map<String, dynamic>)';
-    }
   }
 
   static String _getOperationReturnType(DocumentNode operationDoc,
