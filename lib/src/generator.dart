@@ -319,7 +319,7 @@ $operationDocumentContent
 
     return graphql.QueryResult<$returnType>(
       options: options,
-      data: result.data?['$fieldName'] as $returnType,
+      data: result.data?['$fieldName'] as Map<String, dynamic>?,
       exception: result.exception,
       context: result.context,
       source: result.source ?? graphql.QueryResultSource.network,
