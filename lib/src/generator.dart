@@ -319,7 +319,7 @@ $operationDocumentContent
 
     return graphql.QueryResult<$returnType>(
       options: options,
-      data: result.data != null ? result.data!['$fieldName'] as $returnType : null,
+      data: result.data != null ? ${_generateDataExtraction(returnType, fieldName)} : null,
       exception: result.exception,
       context: result.context,
       source: result.source ?? graphql.QueryResultSource.network,
@@ -334,7 +334,7 @@ $operationDocumentContent
         throw Exception("Error: result.data is null");
       }
 
-      ${_generateReturnStatement(returnType, fieldName)}
+      return result.data!;
     } catch (e) {
       throw Exception("An error occurred while fetching data: \$e");
     }
@@ -343,7 +343,7 @@ $operationDocumentContent
 ''';
   }
 
-  static String _generateReturnStatement(String returnType, String fieldName) {
+  static String _generateDataExtraction(String returnType, String fieldName) {
     if (returnType == 'bool' ||
         returnType == 'bool?' ||
         returnType == 'int' ||
@@ -352,15 +352,12 @@ $operationDocumentContent
         returnType == 'double?' ||
         returnType == 'String' ||
         returnType == 'String?') {
-      return 'return result.data!["$fieldName"] as $returnType;';
+      return 'result.data!["$fieldName"] as $returnType';
     } else if (returnType.startsWith('List<') && returnType.endsWith('>')) {
       final innerType = returnType.substring(5, returnType.length - 1);
-      return '''
-        final list = result.data!['$fieldName'] as List;
-        return list.map((e) => $innerType.fromJson(e as Map<String, dynamic>)).toList();
-      ''';
+      return '(result.data!["$fieldName"] as List).map((e) => $innerType.fromJson(e as Map<String, dynamic>)).toList()';
     } else {
-      return 'return $returnType.fromJson(result.data!["$fieldName"] as Map<String, dynamic>);';
+      return '$returnType.fromJson(result.data!["$fieldName"] as Map<String, dynamic>)';
     }
   }
 
