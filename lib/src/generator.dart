@@ -329,7 +329,12 @@ $operationDocumentContent
   Future<$returnType?> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     try {
       final result = await ${operationName.toCamelCase()}(variables);
-      return result.data;
+
+      if (result.data == null) {
+        throw Exception("Error: result.data is null");
+      }
+
+      return result.data as $returnType?;
     } catch (e) {
       throw Exception("An error occurred while fetching data: \$e");
     }
