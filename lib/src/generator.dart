@@ -326,8 +326,18 @@ ${operationDoc.toString()}
   }
 
   Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
-    final result = await ${operationName.toCamelCase()}(variables);
-    ${_generateReturnStatement(returnType, fieldName)}
+    try {
+      final result = await ${operationName.toCamelCase()}(variables);
+
+      if (result.data == null) {
+        throw Exception("Error: result.data is null");
+      }
+
+      final ${fieldName}Data = result.data as Map<String, dynamic>;
+      return $returnType.fromJson(${fieldName}Data);
+    } catch (e) {
+      throw Exception("An error occurred while fetching data: \$e");
+    }
   }
 }
 ''';
