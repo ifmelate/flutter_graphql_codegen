@@ -49,41 +49,24 @@ import 'package:json_annotation/json_annotation.dart';
 
 part 'types.g.dart';
 
-class Decimal {
-  final String value;
-  Decimal(this.value);
 
-  @override
-  String toString() => value;
-
-  static Decimal parse(String value) => Decimal(value);
-}
 
 class DecimalConverter implements JsonConverter<Decimal, String> {
   const DecimalConverter();
 
   @override
-  Decimal fromJson(String json) => Decimal(json);
+  Decimal fromJson(String json) => decimal.parse
 
   @override
   String toJson(Decimal object) => object.toString();
 }
 
-class DateTime {
-  final String value;
-  DateTime(this.value);
-
-  @override
-  String toString() => value;
-
-  static DateTime parse(String value) => DateTime(value);
-}
 
 class DateTimeConverter implements JsonConverter<DateTime, String> {
   const DateTimeConverter();
 
   @override
-  DateTime fromJson(String json) => DateTime(json);
+  DateTime fromJson(String json) => DateTime.parse(json);
 
   @override
   String toJson(DateTime object) => object.toString();
@@ -604,7 +587,7 @@ $operationDocumentContent
         buffer.writeln('  @${baseType}Converter()');
       }
 
-      buffer.writeln('  final $fieldType $fieldName;');
+      buffer.writeln('  $fieldType $fieldName;');
     }
 
     buffer.writeln();
