@@ -339,6 +339,12 @@ $operationDocumentContent
       final List<dynamic> jsonList = result.data! as List<dynamic>;
       return jsonList.map((json) => $innerType.fromJson(json as Map<String, dynamic>)).toList();
     ''';
+    } else if (returnType.startsWith('List<') && returnType.endsWith('>?')) {
+      final innerType = returnType.substring(5, returnType.length - 2);
+      return '''
+      final List<dynamic>? jsonList = result.data! as List<dynamic>?;
+      return jsonList?.map((json) => $innerType.fromJson(json as Map<String, dynamic>)).toList();
+    ''';
     } else {
       return 'return $returnType.fromJson(result.data!);';
     }
