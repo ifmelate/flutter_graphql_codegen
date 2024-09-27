@@ -69,6 +69,26 @@ class DecimalConverter implements JsonConverter<Decimal, String> {
   String toJson(Decimal object) => object.toString();
 }
 
+class DateTime {
+  final String value;
+  DateTime(this.value);
+
+  @override
+  String toString() => value;
+
+  static DateTime parse(String value) => DateTime(value);
+}
+
+class DateTimeConverter implements JsonConverter<DateTime, String> {
+  const DateTimeConverter();
+
+  @override
+  DateTime fromJson(String json) => DateTime(json);
+
+  @override
+  String toJson(DateTime object) => object.toString();
+}
+
 class EnumConverter<T> implements JsonConverter<T, String> {
   const EnumConverter(this.valueMap);
 
@@ -158,28 +178,6 @@ $clientExtension
 
   static String _generateScalarConverters(Set<String> customScalars) {
     final buffer = StringBuffer();
-
-    buffer.writeln('''
-class DateTime {
-  final String value;
-  DateTime(this.value);
-
-  @override
-  String toString() => value;
-
-  static DateTime parse(String value) => DateTime(value);
-}
-
-class DateTimeConverter implements JsonConverter<DateTime, String> {
-  const DateTimeConverter();
-
-  @override
-  DateTime fromJson(String json) => DateTime(json);
-
-  @override
-  String toJson(DateTime object) => object.toString();
-}
-''');
 
     for (final scalar in customScalars) {
       if (scalar != 'DateTime') {
@@ -319,7 +317,7 @@ $operationDocumentContent
 
     return graphql.QueryResult<$returnType>(
       options: options,
-      data: result.data?['$fieldName'] as Map<String, dynamic>?,
+      data: ${_generateDataExtraction(returnType, fieldName)},
       exception: result.exception,
       context: result.context,
       source: result.source ?? graphql.QueryResultSource.network,
@@ -334,7 +332,7 @@ $operationDocumentContent
         throw Exception("Error: result.data is null");
       }
 
-      return result.data as $returnType;
+      return ${_generateDataConversion(returnType)};
     } catch (e) {
       throw Exception("An error occurred while fetching data: \$e");
     }
@@ -643,6 +641,32 @@ $operationDocumentContent
       default:
         return graphqlType;
     }
+  }
+
+  static String _generateDataExtraction(String returnType, String fieldName) {
+    if (_isPrimitiveType(returnType)) {
+      return 'result.data?["$fieldName"] as $returnType';
+    } else if (returnType.startsWith('List<') && returnType.endsWith('>')) {
+      final innerType = returnType.substring(5, returnType.length - 1);
+      return '(result.data?["$fieldName"] as List?)?.map((e) => $innerType.fromJson(e as Map<String, dynamic>)).toList()';
+    } else {
+      return '$returnType.fromJson(result.data?["$fieldName"] as Map<String, dynamic>?)';
+    }
+  }
+
+  static String _generateDataConversion(String returnType) {
+    if (_isPrimitiveType(returnType)) {
+      return 'result.data as $returnType';
+    } else if (returnType.startsWith('List<') && returnType.endsWith('>')) {
+      return 'result.data as $returnType';
+    } else {
+      return '$returnType.fromJson(result.data as Map<String, dynamic>)';
+    }
+  }
+
+  static bool _isPrimitiveType(String type) {
+    return ['bool', 'int', 'double', 'String']
+        .contains(type.replaceAll('?', ''));
   }
 }
 
