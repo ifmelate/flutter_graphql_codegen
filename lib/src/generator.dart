@@ -323,14 +323,25 @@ $operationDocumentContent
         throw Exception("Error: result.data is null");
       }
 
-      return $returnType.fromJson(result.data!);
+      ${_generateDataConversion(returnType, fieldName)}
     } catch (e) {
       throw Exception("An error occurred while fetching data: \$e");
     }
-
   }
 }
 ''';
+  }
+
+  static String _generateDataConversion(String returnType, String fieldName) {
+    if (returnType.startsWith('List<') && returnType.endsWith('>')) {
+      final innerType = returnType.substring(5, returnType.length - 1);
+      return '''
+      final List<dynamic> jsonList = result.data! as List<dynamic>;
+      return jsonList.map((json) => $innerType.fromJson(json as Map<String, dynamic>)).toList();
+    ''';
+    } else {
+      return 'return $returnType.fromJson(result.data!);';
+    }
   }
 
   static String _getOperationReturnType(DocumentNode operationDoc,
