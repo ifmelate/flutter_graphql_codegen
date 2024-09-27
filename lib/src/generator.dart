@@ -345,8 +345,17 @@ $operationDocumentContent
       final List<dynamic>? jsonList = result.data! as List<dynamic>?;
       return jsonList?.map((json) => $innerType.fromJson(json as Map<String, dynamic>)).toList();
     ''';
+    } else if (returnType == 'bool' || returnType == 'bool?') {
+      return 'return result.data! as $returnType;';
+    } else if (returnType == 'int' ||
+        returnType == 'int?' ||
+        returnType == 'double' ||
+        returnType == 'double?' ||
+        returnType == 'String' ||
+        returnType == 'String?') {
+      return 'return result.data! as $returnType;';
     } else {
-      return 'return $returnType.fromJson(result.data!);';
+      return 'return $returnType.fromJson(result.data! as Map<String, dynamic>);';
     }
   }
 
