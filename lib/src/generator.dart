@@ -49,13 +49,21 @@ import 'package:json_annotation/json_annotation.dart';
 
 part 'types.g.dart';
 
+class Decimal {
+  final String value;
+  Decimal(this.value);
 
+  @override
+  String toString() => value;
+
+  static Decimal parse(String value) => Decimal(value);
+}
 
 class DecimalConverter implements JsonConverter<Decimal, String> {
   const DecimalConverter();
 
   @override
-  Decimal fromJson(String json) => decimal.parse
+  Decimal fromJson(String json) => Decimal(json);
 
   @override
   String toJson(Decimal object) => object.toString();
