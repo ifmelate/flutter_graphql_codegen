@@ -323,7 +323,7 @@ $operationDocumentContent
         throw Exception("Error: result.data is null");
       }
 
-      return result.data as $returnType;
+      return $returnType.fromJson(result.data!);
     } catch (e) {
       throw Exception("An error occurred while fetching data: \$e");
     }
