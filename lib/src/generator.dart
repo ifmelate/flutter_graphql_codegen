@@ -1,5 +1,6 @@
 import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
+import 'dart:developer' as developer;
 
 class GraphQLCodeGenerator {
   static Set<String> _customScalars = Set<String>();
@@ -27,7 +28,8 @@ class GraphQLCodeGenerator {
       if (definition is TypeDefinitionNode) {
         final typeName = definition.name.value;
         if (definition is ScalarTypeDefinitionNode &&
-            !_builtInScalars.contains(typeName)) {
+            !_builtInScalars.contains(typeName) &&
+            typeName != 'Decimal') {
           _customScalars.add(typeName);
         } else if (definition is EnumTypeDefinitionNode) {
           _enumTypes.add(typeName);
@@ -43,6 +45,11 @@ class GraphQLCodeGenerator {
     final enumDefinitions = _generateEnumDefinitions(schemaDoc);
     final enumConverters = _generateEnumConverters(schemaDoc);
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc);
+
+    // Проверяем, содержит ли схема тип Decimal
+    final hasDecimalType = _customScalars.contains('Decimal') ||
+        schemaDoc.definitions.any((def) =>
+            def is ScalarTypeDefinitionNode && def.name.value == 'Decimal');
 
     return '''
 import 'package:json_annotation/json_annotation.dart';
@@ -119,14 +126,9 @@ $typeDefinitions
         operationName, operationType, documentContent, schemaDoc, definedTypes);
 
     return '''
+import 'dart:developer' as developer;
 import 'package:graphql/client.dart' as graphql;
-import 'package:json_annotation/json_annotation.dart';
-
-part '${operationName.toLowerCase()}.g.dart';
-
-$scalarConverters
-
-$typeDefinitions
+import 'types.dart';
 
 $clientExtension
 ''';
@@ -146,8 +148,9 @@ $clientExtension
         operationName, operationType, documentContent, schemaDoc, definedTypes);
 
     return '''
+import 'dart:developer' as developer;
 import 'package:graphql/client.dart' as graphql;
-import 'types.dart';
+import 'package:raduga_flutter_application/graphql/generated/types.dart';
 
 $clientExtension
 ''';
@@ -159,7 +162,8 @@ $clientExtension
       if (definition is TypeDefinitionNode) {
         final typeName = definition.name.value;
         if (definition is ScalarTypeDefinitionNode &&
-            !_builtInScalars.contains(typeName)) {
+            !_builtInScalars.contains(typeName) &&
+            typeName != 'Decimal') {
           customScalars.add(typeName);
         }
       }
@@ -171,7 +175,7 @@ $clientExtension
     final buffer = StringBuffer();
 
     for (final scalar in customScalars) {
-      if (scalar != 'DateTime') {
+      if (scalar != 'DateTime' && scalar != 'Decimal') {
         buffer.writeln('''
 class $scalar {
   final String value;
@@ -232,7 +236,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         classBuffer.writeln('  @${baseType}Converter()');
       } else if (!_builtInScalars.contains(baseType) &&
           !_scalarToDartType.containsKey(baseType) &&
-          _customScalars.contains(baseType)) {
+          _customScalars.contains(baseType) &&
+          baseType != 'Decimal') {
         classBuffer.writeln('  @${baseType}Converter()');
       }
 
@@ -290,42 +295,53 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         _getOperationReturnType(operationDoc, schemaDoc, definedTypes);
     final fieldName = _getOperationFieldName(operationDoc);
 
+    // Проверяем, является ли тип nullable
+    final isNullable = returnType.endsWith('?');
+    // Всегда используем Future<ReturnType> для методов *Data
+    // Если тип nullable в схеме, сохраняем его nullable и в возвращаемом типе
+    final methodReturnType =
+        isNullable ? 'Future<$returnType>' : 'Future<$returnType>';
+
     return '''
 extension ${operationName}Extension on graphql.GraphQLClient {
-  Future<graphql.QueryResult<$returnType>> ${operationName.toCamelCase()}([Map<String, dynamic>? variables]) async {
-    final options = graphql.$optionsType<$returnType>(
+  Future<graphql.QueryResult<Map<String, dynamic>>> ${operationName.toCamelCase()}([Map<String, dynamic>? variables]) async {
+    final options = graphql.$optionsType<Map<String, dynamic>>(
       document: graphql.gql(r"""
 $operationDocumentContent
       """),
       variables: variables ?? const {},
     );
 
-    final result = await this.$methodName(options);
+    try {
+      final result = await this.$methodName(options);
 
-    if (result.hasException) {
-      throw result.exception!;
+      if (result.hasException) {
+        developer.log('GraphQL error in $operationName: \${result.exception}');
+        throw result.exception!;
+      }
+
+      return result;
+    } catch (e) {
+      developer.log('Error executing GraphQL query $operationName: \$e');
+      rethrow;
     }
-
-    return graphql.QueryResult<$returnType>(
-      options: options,
-      data: result.data?['$fieldName'] as Map<String, dynamic>?,
-      exception: result.exception,
-      context: result.context,
-      source: result.source ?? graphql.QueryResultSource.network,
-    );
   }
 
-  Future<$returnType> ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
+  $methodReturnType ${operationName.toCamelCase()}Data([Map<String, dynamic>? variables]) async {
     try {
       final result = await ${operationName.toCamelCase()}(variables);
 
       if (result.data == null) {
-        throw Exception("Error: result.data is null");
+        developer.log('Error: result.data is null in $operationName');
+        ${isNullable ? 'return null;' : 'throw Exception("Error: result.data is null in $operationName");'}
       }
 
       ${_generateDataConversion(returnType, fieldName)}
-    } catch (e) {
-      throw Exception("An error occurred while fetching data: \$e");
+    
+    } catch (e, stackTrace) {
+      developer.log('Error in ${operationName}Data: \$e');
+      developer.log('Stack trace: \$stackTrace');
+      ${isNullable ? 'return null;' : 'throw Exception("An error occurred while fetching data in $operationName: \$e");'}
     }
   }
 }
@@ -333,29 +349,194 @@ $operationDocumentContent
   }
 
   static String _generateDataConversion(String returnType, String fieldName) {
-    if (returnType.startsWith('List<') && returnType.endsWith('>')) {
-      final innerType = returnType.substring(5, returnType.length - 1);
-      return '''
-      final List<dynamic> jsonList = result.data! as List<dynamic>;
-      return jsonList.map((json) => $innerType.fromJson(json as Map<String, dynamic>)).toList();
-    ''';
-    } else if (returnType.startsWith('List<') && returnType.endsWith('>?')) {
-      final innerType = returnType.substring(5, returnType.length - 2);
-      return '''
-      final List<dynamic>? jsonList = result.data! as List<dynamic>?;
-      return jsonList?.map((json) => $innerType.fromJson(json as Map<String, dynamic>)).toList();
-    ''';
-    } else if (returnType == 'bool' || returnType == 'bool?') {
-      return 'return result.data! as $returnType;';
-    } else if (returnType == 'int' ||
-        returnType == 'int?' ||
-        returnType == 'double' ||
-        returnType == 'double?' ||
-        returnType == 'String' ||
-        returnType == 'String?') {
-      return 'return result.data! as $returnType;';
+    final isNullable = returnType.endsWith('?');
+    final baseType = isNullable
+        ? returnType.substring(0, returnType.length - 1)
+        : returnType;
+
+    // Обработка списков
+    if (baseType.startsWith('List<') && baseType.endsWith('>')) {
+      final innerType = baseType.substring(5, baseType.length - 1);
+      final innerIsNullable = innerType.endsWith('?');
+      final innerBaseType = innerIsNullable
+          ? innerType.substring(0, innerType.length - 1)
+          : innerType;
+
+      return """
+      try {
+        final data = result.data!;
+        if (!data.containsKey('$fieldName') || data['$fieldName'] == null) {
+          return ${isNullable ? 'null' : '[]'};
+        }
+        
+        final jsonList = data['$fieldName'];
+        if (jsonList is! List<dynamic>) {
+          throw Exception("Field '$fieldName' is not a list in GraphQL response");
+        }
+        
+        return jsonList.map((item) {
+          ${_generateItemConversion(innerBaseType, innerIsNullable)}
+        }).toList();
+      } catch (e, stackTrace) {
+        developer.log('Error converting GraphQL response to $returnType: \$e');
+        developer.log('Stack trace: \$stackTrace');
+        ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
+      }
+      """;
+    }
+    // Обработка примитивных типов
+    else if (baseType == 'int' ||
+        baseType == 'bool' ||
+        baseType == 'double' ||
+        baseType == 'String') {
+      return """
+      try {
+        final data = result.data!;
+        if (!data.containsKey('$fieldName') || data['$fieldName'] == null) {
+          ${isNullable ? 'return null;' : 'throw Exception("Field \'$fieldName\' is null in GraphQL response");'}
+        }
+        
+        final value = data['$fieldName'];
+        ${_generatePrimitiveTypeConversion(baseType, isNullable)}
+      } catch (e, stackTrace) {
+        developer.log('Error converting GraphQL response to $returnType: \$e');
+        developer.log('Stack trace: \$stackTrace');
+        ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
+      }
+      """;
+    }
+    // Явная обработка для dynamic baseType
+    else if (baseType == 'dynamic') {
+      return """
+      try {
+        final data = result.data!;
+        if (!data.containsKey('$fieldName') || data['$fieldName'] == null) {
+          ${isNullable ? 'return null;' : 'throw Exception("Field \'$fieldName\' is null in GraphQL response for dynamic type");'}
+        }
+        // Поле само по себе должно быть динамическими данными (например, Map или примитив)
+        return data['$fieldName']; 
+      } catch (e, stackTrace) {
+        developer.log('Error converting GraphQL response for dynamic field $fieldName: \$e');
+        developer.log('Stack trace: \$stackTrace');
+        ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response for dynamic field $fieldName: \$e");'}
+      }
+        """;
+    }
+    // Обработка объектов
+    else {
+      return """
+      try {
+        final data = result.data!;
+        if (!data.containsKey('$fieldName') || data['$fieldName'] == null) {
+          ${isNullable ? 'return null;' : 'throw Exception("Field \'$fieldName\' is null in GraphQL response");'}
+        }
+        
+        final json = data['$fieldName'];
+        if (json is! Map<String, dynamic>) {
+          throw Exception("Field '$fieldName' is not an object in GraphQL response");
+        }
+        
+        return $baseType.fromJson(json);
+      } catch (e, stackTrace) {
+        developer.log('Error converting GraphQL response to $returnType: \$e');
+        developer.log('Stack trace: \$stackTrace');
+        ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
+      }
+      """;
+    }
+  }
+
+  static String _generateItemConversion(String type, bool isNullable) {
+    if (type == 'int') {
+      return """
+          if (item is int) return item;
+          if (item is num) return item.toInt();
+          if (item is String) {
+            final parsed = int.tryParse(item);
+            if (parsed != null) return parsed;
+          }
+          ${isNullable ? 'return null;' : 'throw Exception("Cannot convert item to int");'}
+      """;
+    } else if (type == 'bool') {
+      return """
+          if (item is bool) return item;
+          if (item is String) {
+            if (item.toLowerCase() == 'true') return true;
+            if (item.toLowerCase() == 'false') return false;
+          }
+          if (item is num) return item != 0;
+          ${isNullable ? 'return null;' : 'throw Exception("Cannot convert item to bool");'}
+      """;
+    } else if (type == 'double') {
+      return """
+          if (item is double) return item;
+          if (item is num) return item.toDouble();
+          if (item is String) {
+            final parsed = double.tryParse(item);
+            if (parsed != null) return parsed;
+          }
+          ${isNullable ? 'return null;' : 'throw Exception("Cannot convert item to double");'}
+      """;
+    } else if (type == 'String') {
+      return """
+          if (item is String) return item;
+          return item.toString();
+      """;
+    } else if (type == 'dynamic') {
+      // Явная обработка для dynamic элементов списка
+      return """
+          // Предполагается, что 'item' уже имеет правильный динамический тип (например, Map, если это был объект)
+          return item; 
+      """;
     } else {
-      return 'return $returnType.fromJson(result.data! as Map<String, dynamic>);';
+      return """
+          if (item == null) { ${isNullable ? 'return null;' : 'throw Exception("Null item in non-nullable list for type $type");'} }
+          if (item is! Map<String, dynamic>) { throw Exception("Item is not a map for type $type, actual: \${item.runtimeType}"); }
+          return $type.fromJson(item as Map<String, dynamic>);
+      """;
+    }
+  }
+
+  static String _generatePrimitiveTypeConversion(String type, bool isNullable) {
+    if (type == 'int') {
+      return '''
+        if (value is int) return value;
+        if (value is num) return value.toInt();
+        if (value is String) {
+          final parsed = int.tryParse(value);
+          if (parsed != null) return parsed;
+        }
+        ${isNullable ? 'return null;' : 'throw Exception("Cannot convert value to int");'}
+      ''';
+    } else if (type == 'bool') {
+      return '''
+        if (value is bool) return value;
+        if (value is String) {
+          if (value.toLowerCase() == 'true') return true;
+          if (value.toLowerCase() == 'false') return false;
+        }
+        if (value is num) return value != 0;
+        ${isNullable ? 'return null;' : 'throw Exception("Cannot convert value to bool");'}
+      ''';
+    } else if (type == 'double') {
+      return '''
+        if (value is double) return value;
+        if (value is num) return value.toDouble();
+        if (value is String) {
+          final parsed = double.tryParse(value);
+          if (parsed != null) return parsed;
+        }
+        ${isNullable ? 'return null;' : 'throw Exception("Cannot convert value to double");'}
+      ''';
+    } else if (type == 'String') {
+      return '''
+        if (value is String) return value;
+        return value.toString();
+      ''';
+    } else {
+      return '''
+        return $type.fromJson(value as Map<String, dynamic>);
+      ''';
     }
   }
 
@@ -370,16 +551,16 @@ $operationDocumentContent
       print('Processing definition: ${definition.runtimeType}');
       if (definition is OperationDefinitionNode) {
         final operationType = definition.type.toString().toLowerCase();
-        print('Operation type: $operationType');
+        //print('Operation type: $operationType');
         final rootType = _findRootType(schemaDoc, operationType);
-        print('Root type: ${rootType?.name.value}');
+        //print('Root type: ${rootType?.name.value}');
         if (rootType != null) {
           if (definition.selectionSet.selections.isNotEmpty) {
             final firstSelection = definition.selectionSet.selections.first;
-            print('First selection: ${firstSelection.runtimeType}');
+            //print('First selection: ${firstSelection.runtimeType}');
             if (firstSelection is FieldNode) {
               final fieldName = firstSelection.name.value;
-              print('Field name: $fieldName');
+              //print('Field name: $fieldName');
               final field = rootType.fields.firstWhere(
                 (f) => f.name.value == fieldName,
                 orElse: () => throw StateError('Field not found: $fieldName'),
@@ -392,10 +573,10 @@ $operationDocumentContent
               }
 
               final schemaType = _getSchemaType(field.type);
-              print('Schema type: $schemaType');
+              //print('Schema type: $schemaType');
               final dartType =
                   _mapSchemaTypeToDartType(schemaType, definedTypes);
-              print('Dart type: $dartType');
+              // print('Dart type: $dartType');
               return dartType;
             }
           } else {
@@ -485,7 +666,7 @@ $operationDocumentContent
         return isNullable ? 'Decimal?' : 'Decimal';
       default:
         if (definedTypes.contains(baseType) ||
-            _customScalars.contains(baseType) ||
+            (_customScalars.contains(baseType) && baseType != 'Decimal') ||
             _enumTypes.contains(baseType)) {
           return isNullable ? '$baseType?' : baseType;
         }
@@ -503,7 +684,7 @@ $operationDocumentContent
       'ID',
       'DateTime',
       'Decimal',
-      ...GraphQLCodeGenerator._customScalars
+      ...GraphQLCodeGenerator._customScalars.where((s) => s != 'Decimal')
     ];
     return scalarTypes.contains(typeName);
   }
@@ -617,7 +798,7 @@ $operationDocumentContent
         buffer.writeln('  @DecimalConverter()');
       } else if (_isEnum(baseType)) {
         buffer.writeln('  @${baseType}Converter()');
-      } else if (_customScalars.contains(baseType)) {
+      } else if (_customScalars.contains(baseType) && baseType != 'Decimal') {
         buffer.writeln('  @${baseType}Converter()');
       }
 

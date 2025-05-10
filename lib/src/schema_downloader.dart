@@ -1,8 +1,29 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io';
+import 'package:path/path.dart' as path;
 
 class SchemaDownloader {
   static Future<String> downloadSchema(String baseUrl) async {
+    // Проверяем, является ли baseUrl локальным путем к файлу
+    if (!baseUrl.startsWith('http://') &&
+        !baseUrl.startsWith('https://') &&
+        !baseUrl.startsWith('file://')) {
+      // Если это локальный путь, читаем файл напрямую
+      try {
+        final file = File(baseUrl);
+        if (await file.exists()) {
+          final content = await file.readAsString();
+          return content;
+        } else {
+          throw Exception('Schema file not found: $baseUrl');
+        }
+      } catch (e) {
+        throw Exception('Failed to read schema file: $e');
+      }
+    }
+
+    // Если это URL, используем HTTP запрос
     final url = Uri.parse(baseUrl).replace(queryParameters: {'sdl': ''});
 
     final response = await http.get(url);
@@ -15,16 +36,19 @@ class SchemaDownloader {
         return response.body;
       } else {
         throw FormatException(
-            'Received content does not appear to be a GraphQL SDL.');
+          'Received content does not appear to be a GraphQL SDL.',
+        );
       }
     } else {
       throw Exception(
-          'Failed to download schema: ${response.statusCode}. Response: ${response.body}');
+        'Failed to download schema: ${response.statusCode}. Response: ${response.body}',
+      );
     }
   }
 
   static Future<String> downloadSchemaUsingIntrospectionQuery(
-      String url) async {
+    String url,
+  ) async {
     final introspectionQuery = '''
       query IntrospectionQuery {
         __schema {
@@ -122,22 +146,22 @@ class SchemaDownloader {
     final response = await http.post(
       Uri.parse(url),
       headers: {'Content-Type': 'application/json'},
-      body: json.encode({
-        'query': introspectionQuery,
-      }),
+      body: json.encode({'query': introspectionQuery}),
     );
 
     final jsonResponse = json.decode(response.body);
 
     if (jsonResponse['errors'] != null) {
       throw Exception(
-          'Failed to download schema: ${response.statusCode}. Errors: ${jsonResponse['errors']}');
+        'Failed to download schema: ${response.statusCode}. Errors: ${jsonResponse['errors']}',
+      );
     }
     if (response.statusCode == 200) {
       return json.encode(jsonResponse['data']);
     } else {
       throw Exception(
-          'Failed to download schema: ${response.statusCode}. Response: ${response.body}');
+        'Failed to download schema: ${response.statusCode}. Response: ${response.body}',
+      );
     }
   }
 }
