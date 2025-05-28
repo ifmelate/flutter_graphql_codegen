@@ -49,14 +49,20 @@ class Long {
   static Long parse(String value) => Long(value);
 }
 
-class DecimalConverter implements JsonConverter<Decimal, String> {
+class DecimalConverter implements JsonConverter<Decimal, dynamic> {
   const DecimalConverter();
 
   @override
-  Decimal fromJson(String json) => Decimal(json);
+  Decimal fromJson(dynamic json) {
+    if (json == null) return Decimal('0');
+    if (json is String) return Decimal(json);
+    if (json is int) return Decimal(json.toString());
+    if (json is double) return Decimal(json.toString());
+    return Decimal(json.toString());
+  }
 
   @override
-  String toJson(Decimal object) => object.toString();
+  dynamic toJson(Decimal object) => object.toString();
 }
 
 class DateTimeConverter implements JsonConverter<DateTime, dynamic> {
@@ -87,6 +93,37 @@ class LongConverter implements JsonConverter<Long, dynamic> {
 
   @override
   dynamic toJson(Long object) => object.toString();
+}
+
+class Byte {
+  final int value;
+  Byte(this.value);
+
+  @override
+  String toString() => value.toString();
+
+  static Byte parse(dynamic value) {
+    if (value is int) return Byte(value);
+    if (value is String) return Byte(int.tryParse(value) ?? 0);
+    if (value is double) return Byte(value.toInt());
+    return Byte(0);
+  }
+}
+
+class ByteConverter implements JsonConverter<Byte, dynamic> {
+  const ByteConverter();
+
+  @override
+  Byte fromJson(dynamic json) {
+    if (json == null) return Byte(0);
+    if (json is int) return Byte(json);
+    if (json is String) return Byte(int.tryParse(json) ?? 0);
+    if (json is double) return Byte(json.toInt());
+    return Byte(0);
+  }
+
+  @override
+  dynamic toJson(Byte object) => object.value;
 }
 
 class SafeStringConverter implements JsonConverter<String, dynamic> {
@@ -158,6 +195,22 @@ class SafeDoubleConverter implements JsonConverter<double, dynamic> {
   dynamic toJson(double object) => object;
 }
 
+class SafeDecimalConverter implements JsonConverter<Decimal, dynamic> {
+  const SafeDecimalConverter();
+
+  @override
+  Decimal fromJson(dynamic json) {
+    if (json == null) return Decimal('0');
+    if (json is String) return Decimal(json);
+    if (json is int) return Decimal(json.toString());
+    if (json is double) return Decimal(json.toString());
+    return Decimal(json.toString());
+  }
+
+  @override
+  dynamic toJson(Decimal object) => object.toString();
+}
+
 class EnumConverter<T> implements JsonConverter<T, String> {
   const EnumConverter(this.valueMap);
 
@@ -188,7 +241,11 @@ ${_generateListConverterHelpers(TypeRegistry.customScalars)}
     final buffer = StringBuffer();
 
     for (final scalar in customScalars) {
-      if (scalar != 'DateTime' && scalar != 'Decimal' && scalar != 'Long') {
+      if (scalar != 'Decimal' &&
+          scalar != 'DateTime' &&
+          scalar != 'Short' &&
+          scalar != 'Byte' &&
+          scalar != 'Long') {
         buffer.writeln('''
 class $scalar {
   final String value;
@@ -310,7 +367,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         // Add converter annotation for custom scalar types in lists
         if (TypeRegistry.isCustomScalar(cleanInnerType) &&
             cleanInnerType != 'Decimal' &&
-            cleanInnerType != 'Short') {
+            cleanInnerType != 'Short' &&
+            cleanInnerType != 'Byte') {
           // For lists of custom scalars, use JsonKey with converter
           buffer.writeln(
               '  @JsonKey(defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
@@ -320,6 +378,9 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         } else if (cleanInnerType == 'Decimal') {
           buffer.writeln(
               '  @JsonKey(defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
+        } else if (cleanInnerType == 'Byte') {
+          buffer.writeln(
+              '  @JsonKey(defaultValue: [], fromJson: _byteListFromJson, toJson: _byteListToJson)');
         } else if (TypeRegistry.isEnum(cleanInnerType)) {
           buffer.writeln('  @JsonKey(defaultValue: [])');
         } else {
@@ -329,15 +390,18 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
       } else if (baseType == 'DateTime') {
         buffer.writeln('  @DateTimeConverter()');
       } else if (baseType == 'Decimal') {
-        buffer.writeln('  @DecimalConverter()');
+        buffer.writeln('  @SafeDecimalConverter()');
       } else if (baseType == 'Long') {
         buffer.writeln('  @LongConverter()');
+      } else if (baseType == 'Byte') {
+        buffer.writeln('  @ByteConverter()');
       } else if (TypeRegistry.isEnum(baseType)) {
         buffer.writeln('  @${baseType}Converter()');
       } else if (TypeRegistry.isCustomScalar(baseType) &&
           baseType != 'Decimal' &&
           baseType != 'Long' &&
-          baseType != 'Short') {
+          baseType != 'Short' &&
+          baseType != 'Byte') {
         buffer.writeln('  @${baseType}Converter()');
       } else if (baseType == 'bool' && !isNullable) {
         // Use safe bool converter for non-nullable boolean fields
@@ -418,7 +482,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         // Add converter annotation for custom scalar types in lists
         if (TypeRegistry.isCustomScalar(cleanInnerType) &&
             cleanInnerType != 'Decimal' &&
-            cleanInnerType != 'Short') {
+            cleanInnerType != 'Short' &&
+            cleanInnerType != 'Byte') {
           // For lists of custom scalars, use JsonKey with converter
           classBuffer.writeln(
               '  @JsonKey(defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
@@ -428,6 +493,9 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         } else if (cleanInnerType == 'Decimal') {
           classBuffer.writeln(
               '  @JsonKey(defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
+        } else if (cleanInnerType == 'Byte') {
+          classBuffer.writeln(
+              '  @JsonKey(defaultValue: [], fromJson: _byteListFromJson, toJson: _byteListToJson)');
         } else if (TypeRegistry.isEnum(cleanInnerType)) {
           classBuffer.writeln('  @JsonKey(defaultValue: [])');
         } else {
@@ -437,9 +505,11 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
       } else if (baseType == 'DateTime') {
         classBuffer.writeln('  @DateTimeConverter()');
       } else if (baseType == 'Decimal') {
-        classBuffer.writeln('  @DecimalConverter()');
+        classBuffer.writeln('  @SafeDecimalConverter()');
       } else if (baseType == 'Long') {
         classBuffer.writeln('  @LongConverter()');
+      } else if (baseType == 'Byte') {
+        classBuffer.writeln('  @ByteConverter()');
       } else if (TypeRegistry.isEnum(baseType)) {
         classBuffer.writeln('  @${baseType}Converter()');
       } else if (!GraphQLConstants.builtInScalars.contains(baseType) &&
@@ -447,7 +517,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
           TypeRegistry.isCustomScalar(baseType) &&
           baseType != 'Decimal' &&
           baseType != 'Long' &&
-          baseType != 'Short') {
+          baseType != 'Short' &&
+          baseType != 'Byte') {
         classBuffer.writeln('  @${baseType}Converter()');
       }
 
@@ -520,7 +591,10 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
 
     // Generate helpers for each custom scalar type
     for (final scalar in customScalars) {
-      if (scalar != 'Decimal' && scalar != 'DateTime' && scalar != 'Short') {
+      if (scalar != 'Decimal' &&
+          scalar != 'DateTime' &&
+          scalar != 'Short' &&
+          scalar != 'Byte') {
         buffer.writeln('''
 // Helper functions for $scalar list conversion
 List<$scalar>? _${scalar.toLowerCase()}ListFromJson(List<dynamic>? json) {
@@ -563,7 +637,16 @@ List<String>? _decimalListToJson(List<Decimal>? list) {
   return list.map((item) => item.toString()).toList();
 }
 
+// Helper functions for Byte list conversion
+List<Byte>? _byteListFromJson(List<dynamic>? json) {
+  if (json == null) return null;
+  return json.map((item) => Byte.parse(item)).toList();
+}
 
+List<dynamic>? _byteListToJson(List<Byte>? list) {
+  if (list == null) return null;
+  return list.map((item) => item.value).toList();
+}
 ''');
 
     return buffer.toString();
