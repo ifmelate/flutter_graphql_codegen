@@ -16,7 +16,7 @@ and the Flutter guide for
 [![pub package](https://img.shields.io/pub/v/flutter_graphql_codegen.svg)](https://pub.dev/packages/flutter_graphql_codegen)
 [![license](https://img.shields.io/github/license/ifmelate/flutter_graphql_codegen.svg)](https://github.com/ifmelate/flutter_graphql_codegen/blob/main/LICENSE)
 
-A powerful code generator for Flutter GraphQL applications that generates type-safe Dart classes and client extensions from GraphQL schemas and operations.
+A code generator for Flutter GraphQL applications that generates type-safe Dart classes and client extensions from GraphQL schemas and operations.
 
 ## ✨ Features
 
