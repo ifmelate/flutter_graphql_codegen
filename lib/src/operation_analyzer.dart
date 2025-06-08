@@ -3,7 +3,6 @@ library;
 
 import 'package:gql/ast.dart';
 import 'schema_analyzer.dart';
-import 'code_utils.dart';
 
 /// Utility class for analyzing GraphQL operations
 class OperationAnalyzer {
@@ -13,13 +12,7 @@ class OperationAnalyzer {
     DocumentNode schemaDoc,
     Set<String> definedTypes,
   ) {
-    print('Entering getOperationReturnType');
-    print('Operation document: ${operationDoc.toString()}');
-    print('Schema document: ${schemaDoc.toString()}');
-    print('Defined types: $definedTypes');
-
     for (final definition in operationDoc.definitions) {
-      print('Processing definition: ${definition.runtimeType}');
       if (definition is OperationDefinitionNode) {
         final operationType = definition.type.toString().toLowerCase();
         final rootType = SchemaAnalyzer.findRootType(schemaDoc, operationType);
@@ -39,16 +32,12 @@ class OperationAnalyzer {
                   schemaType, definedTypes);
               return dartType;
             }
-          } else {
-            print('Selection set is empty');
           }
         } else {
-          print('Root type is null, falling back to dynamic');
           return 'dynamic';
         }
       }
     }
-    print('Unable to determine return type for operation');
     return 'dynamic';
   }
 

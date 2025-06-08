@@ -1,0 +1,72 @@
+fragment UserFragment on User {
+  id
+  username
+  fullName
+  avatar
+  role
+  status
+  followerCount
+  createdAt
+}
+
+fragment PostFragment on Post {
+  id
+  title
+  excerpt
+  slug
+  status
+  isPublished
+  publishedAt
+  author {
+    ...UserFragment
+  }
+  commentCount
+  likeCount
+  viewCount
+  createdAt
+}
+
+fragment CommentFragment on Comment {
+  id
+  content
+  author {
+    ...UserFragment
+  }
+  post {
+    id
+    title
+    slug
+  }
+  likeCount
+  isEdited
+  createdAt
+}
+
+query SearchContent($input: SearchInput!) {
+  search(input: $input) {
+    ... on User {
+      ...UserFragment
+      email @include(if: false)
+      preferences @skip(if: true) {
+        theme
+        language
+      }
+    }
+    ... on Post {
+      ...PostFragment
+      content
+      tags {
+        id
+        name
+        color
+      }
+    }
+    ... on Comment {
+      ...CommentFragment
+      parent {
+        id
+        content
+      }
+    }
+  }
+} 

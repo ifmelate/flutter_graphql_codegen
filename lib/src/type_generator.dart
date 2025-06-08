@@ -18,11 +18,6 @@ class TypeGenerator {
     final enumConverters = _generateEnumConverters(schemaDoc);
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc);
 
-    // Check if schema contains Decimal type
-    final hasDecimalType = TypeRegistry.customScalars.contains('Decimal') ||
-        schemaDoc.definitions.any((def) =>
-            def is ScalarTypeDefinitionNode && def.name.value == 'Decimal');
-
     return '''${CodeGenerationConstants.generatedFileWarning}
 
 import 'package:json_annotation/json_annotation.dart';
@@ -330,6 +325,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
     for (final definition in schemaDoc.definitions) {
       if (definition is ObjectTypeDefinitionNode) {
         buffer.writeln(_generateTypeDefinition(definition));
+      } else if (definition is InputObjectTypeDefinitionNode) {
+        buffer.writeln(_generateInputTypeDefinition(definition));
       }
     }
 
@@ -343,7 +340,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
 
     final buffer = StringBuffer();
     buffer.writeln(
-        '@JsonSerializable(includeIfNull: false, explicitToJson: true)');
+        '@JsonSerializable(includeIfNull: false, explicitToJson: true, fieldRename: FieldRename.none)');
     buffer.writeln('class $typeName {');
 
     for (final field in fields) {
@@ -358,6 +355,11 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
       final isListField = fieldType.startsWith('List<');
       final isNullable = fieldType.endsWith('?');
 
+      // Add @JsonKey annotation for field name preservation
+      // This ensures that camelCase field names from GraphQL are preserved
+      // instead of being converted to snake_case by json_serializable
+      final needsJsonKeyName = _needsJsonKeyForFieldName(fieldName);
+
       if (isListField) {
         // Check if the list contains custom types that need converters
         final innerType = fieldType.substring(
@@ -371,47 +373,79 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
             cleanInnerType != 'Byte') {
           // For lists of custom scalars, use JsonKey with converter
           buffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
         } else if (cleanInnerType == 'DateTime') {
           buffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
         } else if (cleanInnerType == 'Decimal') {
           buffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
         } else if (cleanInnerType == 'Byte') {
           buffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _byteListFromJson, toJson: _byteListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _byteListFromJson, toJson: _byteListToJson)');
         } else if (TypeRegistry.isEnum(cleanInnerType)) {
-          buffer.writeln('  @JsonKey(defaultValue: [])');
+          buffer.writeln(
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
         } else {
           // For regular lists (including object lists), just use default value
-          buffer.writeln('  @JsonKey(defaultValue: [])');
+          buffer.writeln(
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
         }
       } else if (baseType == 'DateTime') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @DateTimeConverter()');
       } else if (baseType == 'Decimal') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @SafeDecimalConverter()');
       } else if (baseType == 'Long') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @LongConverter()');
       } else if (baseType == 'Byte') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @ByteConverter()');
       } else if (TypeRegistry.isEnum(baseType)) {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @${baseType}Converter()');
       } else if (TypeRegistry.isCustomScalar(baseType) &&
           baseType != 'Decimal' &&
           baseType != 'Long' &&
           baseType != 'Short' &&
           baseType != 'Byte') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @${baseType}Converter()');
       } else if (baseType == 'bool' && !isNullable) {
         // Use safe bool converter for non-nullable boolean fields
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @SafeBoolConverter()');
       } else if (baseType == 'int' && !isNullable) {
         // Use safe int converter for non-nullable integer fields
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @SafeIntConverter()');
       } else if (baseType == 'double' && !isNullable) {
         // Use safe double converter for non-nullable double fields
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
         buffer.writeln('  @SafeDoubleConverter()');
+      } else if (needsJsonKeyName) {
+        // For any other field that needs name preservation
+        buffer.writeln('  @JsonKey(name: \'$fieldName\')');
       }
 
       buffer.writeln('  $fieldType $fieldName;');
@@ -430,8 +464,165 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
       // Other nullable fields also don't need 'required'
       if (isListField) {
         // For list fields, provide empty list as default
+        buffer.writeln('    this.$fieldName = const [],');
+      } else if (isNullable) {
+        buffer.writeln('    this.$fieldName,');
+      } else {
+        buffer.writeln('    required this.$fieldName,');
+      }
+    }
+    buffer.writeln('  });');
+
+    buffer.writeln();
+    buffer.writeln(
+        '  factory $typeName.fromJson(Map<String, dynamic> json) => _\$${typeName}FromJson(json);');
+    buffer.writeln(
+        '  Map<String, dynamic> toJson() => _\$${typeName}ToJson(this);');
+
+    buffer.writeln('}');
+    buffer.writeln();
+
+    return buffer.toString();
+  }
+
+  /// Determines if a field name needs explicit JsonKey annotation to preserve naming
+  /// This prevents json_serializable from converting camelCase to snake_case
+  static bool _needsJsonKeyForFieldName(String fieldName) {
+    // Check if the field name contains uppercase letters (indicating camelCase)
+    // We preserve all field names to maintain consistency with GraphQL responses
+    return fieldName.contains(RegExp(r'[A-Z]')) || fieldName.length > 1;
+  }
+
+  /// Generates a type definition for a specific input type
+  static String _generateInputTypeDefinition(
+      InputObjectTypeDefinitionNode inputNode) {
+    final typeName = inputNode.name.value;
+    final fields = inputNode.fields;
+
+    final buffer = StringBuffer();
+    buffer.writeln(
+        '@JsonSerializable(includeIfNull: false, explicitToJson: true, fieldRename: FieldRename.none)');
+    buffer.writeln('class $typeName {');
+
+    for (final field in fields) {
+      final fieldName = field.name.value;
+      var fieldType = SchemaAnalyzer.getDartType(field.type);
+      final baseType = fieldType
+          .replaceAll('?', '')
+          .replaceAll('List<', '')
+          .replaceAll('>', '');
+
+      // Check if this is a list field
+      final isListField = fieldType.startsWith('List<');
+      final isNullable = fieldType.endsWith('?');
+
+      // Add @JsonKey annotation for field name preservation (same as in object types)
+      final needsJsonKeyName = _needsJsonKeyForFieldName(fieldName);
+
+      if (isListField) {
+        // Check if the list contains custom types that need converters
         final innerType = fieldType.substring(
-            5, fieldType.length - 2); // Remove 'List<' and '>?'
+            5, fieldType.length - (fieldType.endsWith('>?') ? 2 : 1));
+        final cleanInnerType = innerType.replaceAll('?', '');
+
+        // Add converter annotation for custom scalar types in lists
+        if (TypeRegistry.isCustomScalar(cleanInnerType) &&
+            cleanInnerType != 'Decimal' &&
+            cleanInnerType != 'Short' &&
+            cleanInnerType != 'Byte') {
+          // For lists of custom scalars, use JsonKey with converter
+          buffer.writeln(
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
+        } else if (cleanInnerType == 'DateTime') {
+          buffer.writeln(
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+        } else if (cleanInnerType == 'Decimal') {
+          buffer.writeln(
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
+        } else if (cleanInnerType == 'Byte') {
+          buffer.writeln(
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _byteListFromJson, toJson: _byteListToJson)');
+        } else if (TypeRegistry.isEnum(cleanInnerType)) {
+          buffer.writeln(
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
+        } else {
+          // For regular lists (including object lists), just use default value
+          buffer.writeln(
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
+        }
+      } else if (baseType == 'DateTime') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @DateTimeConverter()');
+      } else if (baseType == 'Decimal') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @SafeDecimalConverter()');
+      } else if (baseType == 'Long') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @LongConverter()');
+      } else if (baseType == 'Byte') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @ByteConverter()');
+      } else if (TypeRegistry.isEnum(baseType)) {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @${baseType}Converter()');
+      } else if (TypeRegistry.isCustomScalar(baseType) &&
+          baseType != 'Decimal' &&
+          baseType != 'Long' &&
+          baseType != 'Short' &&
+          baseType != 'Byte') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @${baseType}Converter()');
+      } else if (baseType == 'bool' && !isNullable) {
+        // Use safe bool converter for non-nullable boolean fields
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @SafeBoolConverter()');
+      } else if (baseType == 'int' && !isNullable) {
+        // Use safe int converter for non-nullable integer fields
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @SafeIntConverter()');
+      } else if (baseType == 'double' && !isNullable) {
+        // Use safe double converter for non-nullable double fields
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @SafeDoubleConverter()');
+      } else if (needsJsonKeyName) {
+        // For any other field that needs name preservation
+        buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+      }
+
+      buffer.writeln('  $fieldType $fieldName;');
+    }
+
+    buffer.writeln();
+    buffer.writeln('  $typeName({');
+    for (final field in fields) {
+      final fieldName = field.name.value;
+      var fieldType = SchemaAnalyzer.getDartType(field.type);
+
+      final isNullable = fieldType.endsWith('?');
+      final isListField = fieldType.startsWith('List<');
+
+      // Lists are now always nullable, so they don't need 'required'
+      // Other nullable fields also don't need 'required'
+      if (isListField) {
+        // For list fields, provide empty list as default
         buffer.writeln('    this.$fieldName = const [],');
       } else if (isNullable) {
         buffer.writeln('    this.$fieldName,');
@@ -544,8 +735,6 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
       // Other nullable fields also don't need 'required'
       if (isListField) {
         // For list fields, provide empty list as default
-        final innerType = fieldType.substring(
-            5, fieldType.length - 2); // Remove 'List<' and '>?'
         classBuffer.writeln('    this.$fieldName = const [],');
       } else if (isBooleanMadeNullable) {
         // Boolean fields made nullable for safety don't need 'required'

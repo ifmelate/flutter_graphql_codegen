@@ -1,87 +1,256 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:build/build.dart';
-import 'package:flutter_graphql_codegen/src/generator.dart';
+import 'package:gql/language.dart' as gql_lang;
 import 'package:flutter_graphql_codegen/src/schema_downloader.dart';
 import 'package:flutter_graphql_codegen/src/utils.dart';
-import 'package:glob/glob.dart';
-import 'package:glob/list_local_fs.dart';
+import 'package:flutter_graphql_codegen/src/type_generator.dart';
+import 'package:flutter_graphql_codegen/src/client_extension_generator.dart';
+import 'package:flutter_graphql_codegen/src/operation_analyzer.dart';
+
 import 'config.dart';
-import 'package:path/path.dart' as path;
 
 class GraphQLCodegenBuilder implements Builder {
   final GraphQLCodegenConfig config;
 
   GraphQLCodegenBuilder(this.config);
-  Future<void> _writeFile(String filePath, String content) async {
-    final directory = Directory(path.dirname(filePath));
-    if (!await directory.exists()) {
-      await directory.create(recursive: true);
-    }
-    await File(filePath).writeAsString(content);
-  }
 
   @override
-  Future<void> build(BuildStep buildStep) async {
+  FutureOr<void> build(BuildStep buildStep) async {
     final inputId = buildStep.inputId;
-    List<String> documents = [];
-    print('BuildStep of graphql codegen: ${buildStep.inputId}');
-    // if (inputId.extension == '.schema.graphql') {
-    // This is the schema file
-    final schemaUrl = config.schemaUrl;
-    print('Downloading schema from $schemaUrl');
-    final schema = await SchemaDownloader.downloadSchema(schemaUrl);
-    print('Graphql Schema downloaded from $schemaUrl');
 
-    // Generate types file
-    final typesCode = GraphQLCodeGenerator.generateTypesFile(schema);
-    final typesOutputPath = '${config.outputDir}/types.dart';
-    await _writeFile(typesOutputPath, typesCode);
-    print('Generated types file: $typesOutputPath');
-
-    // Process each document
-    final documentPaths = await _resolveDocumentPaths(config.documentPaths);
-    print('Found ${documentPaths.length} Graphql Documents');
-    if (documentPaths.isEmpty) {
-      throw Exception('No Graphql Documents found');
+    // Skip non-GraphQL files
+    if (!inputId.path.endsWith('.graphql')) {
+      return;
     }
 
-    final typesContent = await File(typesOutputPath).readAsString();
+    // Skip schema files
+    if (inputId.path.contains('schema.graphql')) {
+      return;
+    }
 
-    for (final documentPath in documentPaths) {
-      final documentContent = await File(documentPath).readAsString();
-      final operations = parseOperations(documentContent);
+    print('🔧 Processing GraphQL operation: ${inputId.path}');
 
-      for (final operation in operations) {
-        final operationCode = GraphQLCodeGenerator.generateOperationFile(schema,
-            documentContent, operation.name, operation.type, typesContent);
-
-        final outputFileName = '${operation.name.toLowerCase()}_graphql.dart';
-        print('Generating GraphQL client $outputFileName');
-        final outputPath = '${config.outputDir}/$outputFileName';
-        await _writeFile(outputPath, operationCode);
-        print('Generated: $outputPath');
+    // Load schema (either from URL or local file)
+    String schema;
+    if (config.schemaUrl.startsWith('http://') ||
+        config.schemaUrl.startsWith('https://')) {
+      // Download from URL
+      schema = await SchemaDownloader.downloadSchema(config.schemaUrl);
+    } else {
+      // Read from local file
+      try {
+        final schemaFile = File(config.schemaUrl);
+        if (await schemaFile.exists()) {
+          schema = await schemaFile.readAsString();
+        } else {
+          throw Exception('Schema file not found: ${config.schemaUrl}');
+        }
+      } catch (e) {
+        print('❌ Error reading schema file: $e');
+        throw Exception('Failed to read schema from ${config.schemaUrl}: $e');
       }
     }
+
+    // Read GraphQL document content
+    final content = await buildStep.readAsString(inputId);
+
+    // Extract operation name and type from document
+    final operationName = _extractOperationName(content);
+    final operationType = _extractOperationType(content);
+
+    if (operationName != null && operationType != null) {
+      print('📝 Generating code for: $operationName ($operationType)');
+
+      // Generate client extension for this specific operation
+      final schemaDoc = gql_lang.parseString(schema);
+      final typesCode = TypeGenerator.generateTypesFile(schema);
+
+      // Generate types.dart file if it doesn't exist
+      await _generateTypesFileIfNeeded(typesCode);
+
+      final definedTypes = OperationAnalyzer.extractDefinedTypes(typesCode);
+      final clientExtension = ClientExtensionGenerator.generateClientExtension(
+        operationName,
+        operationType,
+        content,
+        schemaDoc,
+        definedTypes,
+      );
+
+      // Create operation file content
+      final operationFileCode = '''// AUTO-GENERATED FILE - DO NOT EDIT
+// Generated by flutter_graphql_codegen
+// Operation: $operationName ($operationType)
+
+import 'package:graphql/client.dart' as graphql;
+import 'types.dart';
+
+$clientExtension
+''';
+
+      // Generate files directly in output directory specified in config
+      await _writeToOutputDirectory(operationName, operationFileCode);
+
+      print(
+          '📝 Generated: ${config.outputDir}/${_generateOutputFileName(operationName)}');
+    }
+
+    // Генерируем index файл после обработки всех операций
+    await _generateIndexFile();
+  }
+
+  /// Generates index.dart file with all operations
+  Future<void> _generateIndexFile() async {
+    try {
+      // Найти все сгенерированные .g.dart файлы
+      final generatedFiles = <File>[];
+      await _findGeneratedFiles(generatedFiles);
+
+      final exports = <String>[];
+      final operations = <String>[];
+
+      for (final file in generatedFiles) {
+        final content = await file.readAsString();
+
+        if (!content.contains('Generated by flutter_graphql_codegen')) {
+          continue;
+        }
+
+        // Файлы теперь в той же папке что и index.dart, поэтому просто используем имя файла
+        final fileName = file.path.split('/').last;
+        exports.add("export '$fileName';");
+
+        // Извлекаем имя операции из имени файла (snake_case_graphql.g.dart -> SnakeCaseGraphql)
+        final operationName = fileName
+            .replaceAll('_graphql.g.dart', '')
+            .split('_')
+            .map((word) => word[0].toUpperCase() + word.substring(1))
+            .join('');
+        operations.add('// $operationName');
+      }
+
+      if (exports.isEmpty) {
+        print('📁 No generated GraphQL files found for index');
+        return;
+      }
+
+      // Создаем index файл
+      final indexContent = '''// AUTO-GENERATED FILE - DO NOT EDIT
+// Generated by flutter_graphql_codegen
+// GraphQL operations index
+
+// Export all generated operations
+${exports.join('\n')}
+
+// Available operations:
+${operations.join('\n')}
+
+// Usage:
+// import 'package:your_app/${config.outputDir}/index.dart';
+// 
+// final client = GraphQLClient(...);
+// final result = await client.getUserProfile({'culture': 'en'});
+''';
+
+      // Создаем директорию если не существует
+      final outputDir = Directory(config.outputDir);
+      if (!outputDir.existsSync()) {
+        await outputDir.create(recursive: true);
+      }
+
+      // Записываем index файл
+      final indexFile = File('${config.outputDir}/index.dart');
+      await indexFile.writeAsString(indexContent);
+
+      print('📝 Generated index file: ${indexFile.path}');
+      print('✅ Index complete! Found ${exports.length} operations');
+    } catch (e) {
+      print('⚠️ Error generating index file: $e');
+    }
+  }
+
+  /// Generates types.dart file if it doesn't exist
+  Future<void> _generateTypesFileIfNeeded(String typesCode) async {
+    // Создаем директорию если не существует
+    final outputDir = Directory(config.outputDir);
+    if (!outputDir.existsSync()) {
+      await outputDir.create(recursive: true);
+    }
+
+    // Проверяем, существует ли уже файл types.dart
+    final typesFile = File('${config.outputDir}/types.dart');
+    if (!typesFile.existsSync()) {
+      await typesFile.writeAsString(typesCode);
+      print('📝 Generated types file: ${typesFile.path}');
+    }
+  }
+
+  /// Writes operation file to the configured output directory
+  Future<void> _writeToOutputDirectory(
+      String operationName, String content) async {
+    // Создаем директорию если не существует
+    final outputDir = Directory(config.outputDir);
+    if (!outputDir.existsSync()) {
+      await outputDir.create(recursive: true);
+    }
+
+    // Создаем файл в output директории
+    final fileName = _generateOutputFileName(operationName);
+    final filePath = '${config.outputDir}/$fileName';
+    final file = File(filePath);
+
+    await file.writeAsString(content);
+  }
+
+  /// Finds all generated .g.dart files
+  Future<void> _findGeneratedFiles(List<File> files) async {
+    // Ищем файлы в output директории вместо всей lib
+    final outputDir = Directory(config.outputDir);
+    if (!outputDir.existsSync()) {
+      return;
+    }
+
+    await for (final entity
+        in outputDir.list(recursive: true, followLinks: false)) {
+      if (entity is File && entity.path.endsWith('.g.dart')) {
+        files.add(entity);
+      }
+    }
+  }
+
+  /// Extracts operation name from GraphQL document content
+  String? _extractOperationName(String content) {
+    final operations = parseOperations(content);
+    return operations.isNotEmpty ? operations.first.name : null;
+  }
+
+  /// Extracts operation type from GraphQL document content
+  String? _extractOperationType(String content) {
+    final operations = parseOperations(content);
+    return operations.isNotEmpty ? operations.first.type : null;
+  }
+
+  /// Generates the output file name based on operation name
+  /// Example: GetDrugList -> get_drug_list_graphql.g.dart
+  String _generateOutputFileName(String operationName) {
+    final snakeCaseName = _camelToSnakeCase(operationName);
+    return '${snakeCaseName}_graphql.g.dart';
+  }
+
+  /// Converts camelCase to snake_case
+  /// Example: GetDrugList -> get_drug_list, ContinueVisit -> continue_visit
+  String _camelToSnakeCase(String input) {
+    return input
+        .replaceAllMapped(RegExp(r'(?<!^)(?=[A-Z])'), (match) => '_')
+        .toLowerCase();
   }
 
   @override
   Map<String, List<String>> get buildExtensions => {
-        r'$lib$': ['generated_client.dart'],
+        '.graphql': ['.g.dart'],
       };
-}
-
-Future<List<String>> _resolveDocumentPaths(List<String> patterns) async {
-  final resolvedPaths = <String>[];
-  for (final pattern in patterns) {
-    final glob = Glob(pattern);
-    await for (final entity in glob.list()) {
-      if (entity is File) {
-        resolvedPaths.add(entity.path);
-      }
-    }
-  }
-  return resolvedPaths;
 }
 
 Builder graphqlCodegenBuilder(BuilderOptions options) {

@@ -1,7 +1,17 @@
 name: flutter_graphql_codegen
-description: A starting point for Dart libraries or applications.
+description: A powerful code generator for Flutter GraphQL applications that generates type-safe Dart classes and client extensions from GraphQL schemas and operations.
 version: 1.0.0
+homepage: https://github.com/ifmelate/flutter_graphql_codegen
 repository: https://github.com/ifmelate/flutter_graphql_codegen.git
+issue_tracker: https://github.com/ifmelate/flutter_graphql_codegen/issues
+documentation: https://github.com/ifmelate/flutter_graphql_codegen#readme
+
+topics:
+  - graphql
+  - codegen
+  - flutter
+  - dart
+  - type-safety
 
 environment:
   sdk: ^3.0.0

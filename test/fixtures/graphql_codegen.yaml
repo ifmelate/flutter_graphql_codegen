@@ -1,4 +1,4 @@
-schema_url: https://localhost:5104/graphql
-output_dir: lib/graphql/generated
+schema_url: test/fixtures/schema.graphql
+output_dir: test/generated
 document_paths:
   - test/fixtures/*.graphql

@@ -6,7 +6,7 @@ library flutter_graphql_codegen;
 
 // Core functionality
 export 'src/flutter_graphql_codegen_base.dart';
-export 'src/builder.dart';
+export 'src/builder.dart' show graphqlCodegenBuilder;
 export 'src/config.dart';
 export 'src/generator.dart';
 

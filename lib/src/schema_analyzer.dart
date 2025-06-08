@@ -43,14 +43,13 @@ class SchemaAnalyzer {
   /// Finds the root type for a given operation type
   static ObjectTypeDefinitionNode? findRootType(
       DocumentNode schemaDoc, String operationType) {
-    print('Entering findRootType');
-    print('Operation type: $operationType');
-
     operationType = operationType.toLowerCase();
     if (operationType == 'operationtype.mutation') {
       operationType = 'mutation';
     } else if (operationType == 'operationtype.query') {
       operationType = 'query';
+    } else if (operationType == 'operationtype.subscription') {
+      operationType = 'subscription';
     }
 
     for (final definition in schemaDoc.definitions) {
@@ -123,7 +122,6 @@ class SchemaAnalyzer {
             TypeRegistry.isEnum(baseType)) {
           return isNullable ? '$baseType?' : baseType;
         }
-        print('Warning: Unknown type $baseType');
         return isNullable ? 'dynamic?' : 'dynamic';
     }
   }

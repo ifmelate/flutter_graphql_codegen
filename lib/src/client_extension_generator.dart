@@ -3,10 +3,8 @@ library;
 
 import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
-import 'dart:developer' as developer;
 import 'code_utils.dart';
 import 'operation_analyzer.dart';
-import 'schema_analyzer.dart';
 
 /// Utility class for generating client extensions
 class ClientExtensionGenerator {
@@ -54,13 +52,11 @@ $operationDocumentContent
       final result = await this.$methodName(options);
 
       if (result.hasException) {
-        developer.log('GraphQL error in $operationName: \${result.exception}');
         throw result.exception!;
       }
 
       return result;
     } catch (e) {
-      developer.log('Error executing GraphQL query $operationName: \$e');
       rethrow;
     }
   }
@@ -70,15 +66,12 @@ $operationDocumentContent
       final result = await ${operationName.toCamelCase()}(variables);
 
       if (result.data == null) {
-        developer.log('Error: result.data is null in $operationName');
         ${isNullable ? 'return null;' : 'throw Exception("Error: result.data is null in $operationName");'}
       }
 
       ${_generateDataConversion(returnType, fieldName, skippableFields)}
     
     } catch (e, stackTrace) {
-      developer.log('Error in ${operationName}Data: \$e');
-      developer.log('Stack trace: \$stackTrace');
       ${isNullable ? 'return null;' : 'throw Exception("An error occurred while fetching data in $operationName: \$e");'}
     }
   }
@@ -121,8 +114,6 @@ $operationDocumentContent
           ${_generateItemConversion(innerBaseType, innerIsNullable)}
         }).toList();
       } catch (e, stackTrace) {
-        developer.log('Error converting GraphQL response to $returnType: \$e');
-        developer.log('Stack trace: \$stackTrace');
         ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
       }
       """;
@@ -142,8 +133,6 @@ $operationDocumentContent
         final value = data['$fieldName'];
         ${_generatePrimitiveTypeConversion(baseType, isNullable)}
       } catch (e, stackTrace) {
-        developer.log('Error converting GraphQL response to $returnType: \$e');
-        developer.log('Stack trace: \$stackTrace');
         ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
       }
       """;
@@ -159,8 +148,6 @@ $operationDocumentContent
         // The field itself should be dynamic data (e.g., Map or primitive)
         return data['$fieldName']; 
       } catch (e, stackTrace) {
-        developer.log('Error converting GraphQL response for dynamic field $fieldName: \$e');
-        developer.log('Stack trace: \$stackTrace');
         ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response for dynamic field $fieldName: \$e");'}
       }
         """;
@@ -169,7 +156,7 @@ $operationDocumentContent
     else {
       // Check if there are skippable fields for this type
       final hasSkippableFields =
-          skippableFields?.any((field) => field.startsWith(fieldName + '.')) ??
+          skippableFields?.any((field) => field.startsWith('$fieldName.')) ??
               false;
 
       if (hasSkippableFields && baseType == 'SymptomsListDTO') {
@@ -194,8 +181,6 @@ $operationDocumentContent
           
           return $baseType.fromJson(modifiedJson);
         } catch (e, stackTrace) {
-          developer.log('Error converting GraphQL response to $returnType: \$e');
-          developer.log('Stack trace: \$stackTrace');
           ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
         }
         """;
@@ -214,8 +199,6 @@ $operationDocumentContent
           
           return $baseType.fromJson(json);
         } catch (e, stackTrace) {
-          developer.log('Error converting GraphQL response to $returnType: \$e');
-          developer.log('Stack trace: \$stackTrace');
           ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
         }
         """;

@@ -1,0 +1,447 @@
+# GraphQL Schema for Testing Flutter GraphQL Codegen
+# This schema covers all major GraphQL features
+
+scalar DateTime
+scalar Decimal
+scalar Long
+scalar Byte
+scalar JSON
+scalar Upload
+
+directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ENUM_VALUE
+directive @skip(if: Boolean!) on FIELD | INLINE_FRAGMENT | FRAGMENT_SPREAD
+directive @include(if: Boolean!) on FIELD | INLINE_FRAGMENT | FRAGMENT_SPREAD
+
+# Enums
+enum UserRole {
+  ADMIN
+  MODERATOR
+  USER
+  GUEST
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+# Interfaces
+interface Node {
+  id: ID!
+}
+
+interface Timestamped {
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+# Union Types
+union SearchResult = User | Post | Comment
+
+# Object Types
+type User implements Node & Timestamped {
+  id: ID!
+  username: String!
+  email: String!
+  firstName: String
+  lastName: String
+  fullName: String
+  avatar: String
+  role: UserRole!
+  status: UserStatus!
+  isActive: Boolean!
+  age: Int
+  balance: Decimal
+  metadata: JSON
+  preferences: UserPreferences
+  posts: [Post!]!
+  comments: [Comment!]!
+  followers: [User!]!
+  following: [User!]!
+  followerCount: Int!
+  followingCount: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type UserPreferences {
+  theme: String
+  language: String
+  notifications: NotificationSettings
+  privacy: PrivacySettings
+}
+
+type NotificationSettings {
+  email: Boolean!
+  push: Boolean!
+  sms: Boolean!
+}
+
+type PrivacySettings {
+  profileVisible: Boolean!
+  showEmail: Boolean!
+  showAge: Boolean!
+}
+
+type Post implements Node & Timestamped {
+  id: ID!
+  title: String!
+  content: String!
+  excerpt: String
+  slug: String!
+  status: PostStatus!
+  isPublished: Boolean!
+  publishedAt: DateTime
+  author: User!
+  comments: [Comment!]!
+  tags: [Tag!]!
+  commentCount: Int!
+  likeCount: Int!
+  viewCount: Long!
+  metadata: JSON
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type Comment implements Node & Timestamped {
+  id: ID!
+  content: String!
+  author: User!
+  post: Post!
+  parent: Comment
+  replies: [Comment!]!
+  isEdited: Boolean!
+  likeCount: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type Tag {
+  id: ID!
+  name: String!
+  slug: String!
+  description: String
+  color: String
+  posts: [Post!]!
+  postCount: Int!
+}
+
+# Input Types
+input CreateUserInput {
+  username: String!
+  email: String!
+  password: String!
+  firstName: String
+  lastName: String
+  role: UserRole = USER
+  preferences: UserPreferencesInput
+}
+
+input UpdateUserInput {
+  username: String
+  email: String
+  firstName: String
+  lastName: String
+  role: UserRole
+  status: UserStatus
+  preferences: UserPreferencesInput
+}
+
+input UserPreferencesInput {
+  theme: String
+  language: String
+  notifications: NotificationSettingsInput
+  privacy: PrivacySettingsInput
+}
+
+input NotificationSettingsInput {
+  email: Boolean
+  push: Boolean
+  sms: Boolean
+}
+
+input PrivacySettingsInput {
+  profileVisible: Boolean
+  showEmail: Boolean
+  showAge: Boolean
+}
+
+input CreatePostInput {
+  title: String!
+  content: String!
+  excerpt: String
+  slug: String
+  status: PostStatus = DRAFT
+  tags: [String!]
+  metadata: JSON
+}
+
+input UpdatePostInput {
+  title: String
+  content: String
+  excerpt: String
+  slug: String
+  status: PostStatus
+  tags: [String!]
+  metadata: JSON
+}
+
+input CreateCommentInput {
+  content: String!
+  postId: ID!
+  parentId: ID
+}
+
+input UpdateCommentInput {
+  content: String!
+}
+
+input SearchInput {
+  query: String!
+  type: SearchType
+  limit: Int = 20
+  offset: Int = 0
+}
+
+enum SearchType {
+  ALL
+  USERS
+  POSTS
+  COMMENTS
+}
+
+input PaginationInput {
+  limit: Int = 20
+  offset: Int = 0
+  cursor: String
+}
+
+input SortInput {
+  field: String!
+  direction: SortDirection = ASC
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+# Payload Types
+type CreateUserPayload {
+  user: User
+  errors: [UserError!]!
+  success: Boolean!
+}
+
+type UpdateUserPayload {
+  user: User
+  errors: [UserError!]!
+  success: Boolean!
+}
+
+type DeleteUserPayload {
+  deletedUserId: ID
+  errors: [UserError!]!
+  success: Boolean!
+}
+
+type CreatePostPayload {
+  post: Post
+  errors: [PostError!]!
+  success: Boolean!
+}
+
+type UpdatePostPayload {
+  post: Post
+  errors: [PostError!]!
+  success: Boolean!
+}
+
+type DeletePostPayload {
+  deletedPostId: ID
+  errors: [PostError!]!
+  success: Boolean!
+}
+
+type CreateCommentPayload {
+  comment: Comment
+  errors: [CommentError!]!
+  success: Boolean!
+}
+
+# Error Types
+interface Error {
+  message: String!
+  code: String!
+}
+
+type UserError implements Error {
+  message: String!
+  code: String!
+  field: String
+}
+
+type PostError implements Error {
+  message: String!
+  code: String!
+  field: String
+}
+
+type CommentError implements Error {
+  message: String!
+  code: String!
+  field: String
+}
+
+# Connection Types for Pagination
+type UserConnection {
+  edges: [UserEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type UserEdge {
+  node: User!
+  cursor: String!
+}
+
+type PostConnection {
+  edges: [PostEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type PostEdge {
+  node: Post!
+  cursor: String!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+# Root Types
+type Query {
+  # Single item queries
+  user(id: ID!): User
+  userByUsername(username: String!): User
+  post(id: ID!): Post
+  postBySlug(slug: String!): Post
+  comment(id: ID!): Comment
+  tag(id: ID!): Tag
+  
+  # List queries
+  users(pagination: PaginationInput, sort: SortInput): UserConnection!
+  posts(
+    pagination: PaginationInput
+    sort: SortInput
+    status: PostStatus
+    authorId: ID
+  ): PostConnection!
+  comments(postId: ID!, pagination: PaginationInput): [Comment!]!
+  tags(pagination: PaginationInput): [Tag!]!
+  
+  # Search
+  search(input: SearchInput!): [SearchResult!]!
+  
+  # Current user
+  me: User
+  
+  # Analytics
+  userStats(userId: ID!): UserStats
+  postStats(postId: ID!): PostStats
+}
+
+type Mutation {
+  # User mutations
+  createUser(input: CreateUserInput!): CreateUserPayload!
+  updateUser(id: ID!, input: UpdateUserInput!): UpdateUserPayload!
+  deleteUser(id: ID!): DeleteUserPayload!
+  
+  # Post mutations
+  createPost(input: CreatePostInput!): CreatePostPayload!
+  updatePost(id: ID!, input: UpdatePostInput!): UpdatePostPayload!
+  deletePost(id: ID!): DeletePostPayload!
+  publishPost(id: ID!): UpdatePostPayload!
+  
+  # Comment mutations
+  createComment(input: CreateCommentInput!): CreateCommentPayload!
+  updateComment(id: ID!, input: UpdateCommentInput!): CreateCommentPayload!
+  deleteComment(id: ID!): Boolean!
+  
+  # Social actions
+  followUser(userId: ID!): Boolean!
+  unfollowUser(userId: ID!): Boolean!
+  likePost(postId: ID!): Boolean!
+  unlikePost(postId: ID!): Boolean!
+  likeComment(commentId: ID!): Boolean!
+  unlikeComment(commentId: ID!): Boolean!
+  
+  # File upload
+  uploadFile(file: Upload!): String!
+}
+
+type Subscription {
+  # User subscriptions
+  userUpdated(userId: ID!): User!
+  userOnline(userId: ID!): Boolean!
+  
+  # Post subscriptions
+  postUpdated(postId: ID!): Post!
+  newPostByAuthor(authorId: ID!): Post!
+  
+  # Comment subscriptions
+  newComment(postId: ID!): Comment!
+  commentUpdated(commentId: ID!): Comment!
+  
+  # Real-time notifications
+  notification(userId: ID!): Notification!
+}
+
+# Additional types for subscriptions
+type Notification {
+  id: ID!
+  type: NotificationType!
+  title: String!
+  message: String!
+  data: JSON
+  read: Boolean!
+  user: User!
+  createdAt: DateTime!
+}
+
+enum NotificationType {
+  NEW_FOLLOWER
+  NEW_COMMENT
+  POST_LIKED
+  COMMENT_LIKED
+  MENTION
+}
+
+# Stats types
+type UserStats {
+  totalPosts: Int!
+  totalComments: Int!
+  totalLikes: Int!
+  totalViews: Long!
+  joinDate: DateTime!
+}
+
+type PostStats {
+  totalViews: Long!
+  totalLikes: Int!
+  totalComments: Int!
+  totalShares: Int!
+  engagementRate: Decimal!
+} 

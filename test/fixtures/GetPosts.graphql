@@ -1,0 +1,51 @@
+query GetPosts(
+  $pagination: PaginationInput
+  $sort: SortInput
+  $status: PostStatus
+  $authorId: ID
+) {
+  posts(
+    pagination: $pagination
+    sort: $sort
+    status: $status
+    authorId: $authorId
+  ) {
+    edges {
+      node {
+        id
+        title
+        content
+        excerpt
+        slug
+        status
+        isPublished
+        publishedAt
+        author {
+          id
+          username
+          fullName
+          avatar
+        }
+        tags {
+          id
+          name
+          slug
+          color
+        }
+        commentCount
+        likeCount
+        viewCount
+        createdAt
+        updatedAt
+      }
+      cursor
+    }
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+    totalCount
+  }
+} 

@@ -1,0 +1,34 @@
+subscription UserUpdated($userId: ID!) {
+  userUpdated(userId: $userId) {
+    id
+    username
+    email
+    firstName
+    lastName
+    fullName
+    avatar
+    role
+    status
+    isActive
+    age
+    balance
+    followerCount
+    followingCount
+    preferences {
+      theme
+      language
+      notifications {
+        email
+        push
+        sms
+      }
+      privacy {
+        profileVisible
+        showEmail
+        showAge
+      }
+    }
+    createdAt
+    updatedAt
+  }
+} 

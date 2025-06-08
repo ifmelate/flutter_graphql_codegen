@@ -1,0 +1,37 @@
+mutation CreateUser($input: CreateUserInput!) {
+  createUser(input: $input) {
+    user {
+      id
+      username
+      email
+      firstName
+      lastName
+      fullName
+      role
+      status
+      isActive
+      preferences {
+        theme
+        language
+        notifications {
+          email
+          push
+          sms
+        }
+        privacy {
+          profileVisible
+          showEmail
+          showAge
+        }
+      }
+      createdAt
+      updatedAt
+    }
+    errors {
+      message
+      code
+      field
+    }
+    success
+  }
+} 

@@ -3,46 +3,117 @@ import 'dart:convert';
 import 'dart:io';
 
 class SchemaDownloader {
-  static Future<String> downloadSchema(String baseUrl) async {
-    // Проверяем, является ли baseUrl локальным путем к файлу
-    if (!baseUrl.startsWith('http://') &&
-        !baseUrl.startsWith('https://') &&
-        !baseUrl.startsWith('file://')) {
-      // Если это локальный путь, читаем файл напрямую
-      try {
-        final file = File(baseUrl);
-        if (await file.exists()) {
-          final content = await file.readAsString();
-          return content;
-        } else {
-          throw Exception('Schema file not found: $baseUrl');
-        }
-      } catch (e) {
-        throw Exception('Failed to read schema file: $e');
-      }
+  /// Downloads GraphQL schema from URL or reads from local file
+  /// Supports:
+  /// - HTTP/HTTPS URLs: http://example.com/graphql, https://api.example.com/graphql
+  /// - Local file paths: schema.graphql, lib/graphql/schema.graphql
+  /// - File URLs: file:///path/to/schema.graphql
+  static Future<String> downloadSchema(String schemaSource) async {
+    print('📥 Loading GraphQL schema from: $schemaSource');
+
+    // Handle HTTP/HTTPS URLs
+    if (schemaSource.startsWith('http://') ||
+        schemaSource.startsWith('https://')) {
+      return await _downloadFromUrl(schemaSource);
     }
 
-    // Если это URL, используем HTTP запрос
-    final url = Uri.parse(baseUrl).replace(queryParameters: {'sdl': ''});
+    // Handle local files (both file:// URLs and direct paths)
+    return await _readFromLocalFile(schemaSource);
+  }
 
-    final response = await http.get(url);
+  /// Downloads schema from HTTP/HTTPS URL
+  static Future<String> _downloadFromUrl(String url) async {
+    try {
+      print('🌐 Downloading schema from HTTP URL: $url');
 
-    if (response.statusCode == 200) {
-      // Проверяем, начинается ли содержимое с типичных ключевых слов SDL
-      if (response.body.trim().startsWith('type') ||
-          response.body.trim().startsWith('schema') ||
-          response.body.trim().startsWith('directive')) {
+      // Try direct SDL endpoint first
+      var response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200 && _isValidGraphQLSchema(response.body)) {
+        print('✅ Successfully downloaded schema from direct SDL endpoint');
         return response.body;
+      }
+
+      // If direct SDL didn't work, try with ?sdl parameter
+      final urlWithSdl = Uri.parse(url).replace(queryParameters: {'sdl': ''});
+      response = await http.get(urlWithSdl);
+
+      if (response.statusCode == 200) {
+        if (_isValidGraphQLSchema(response.body)) {
+          print('✅ Successfully downloaded schema with ?sdl parameter');
+          return response.body;
+        } else {
+          throw FormatException(
+            'Received content does not appear to be a valid GraphQL SDL schema.',
+          );
+        }
       } else {
-        throw FormatException(
-          'Received content does not appear to be a GraphQL SDL.',
+        throw Exception(
+          'Failed to download schema: HTTP ${response.statusCode}. Response: ${response.body}',
         );
       }
-    } else {
-      throw Exception(
-        'Failed to download schema: ${response.statusCode}. Response: ${response.body}',
-      );
+    } catch (e) {
+      print('❌ Error downloading schema from URL: $e');
+      rethrow;
     }
+  }
+
+  /// Reads schema from local file
+  static Future<String> _readFromLocalFile(String filePath) async {
+    try {
+      // Handle file:// URLs
+      String actualPath = filePath;
+      if (filePath.startsWith('file://')) {
+        actualPath = filePath.substring(7); // Remove 'file://' prefix
+        print('📂 Reading schema from file:// URL: $actualPath');
+      } else {
+        print('📂 Reading schema from local file: $actualPath');
+      }
+
+      final file = File(actualPath);
+
+      if (!await file.exists()) {
+        throw FileSystemException('Schema file not found', actualPath);
+      }
+
+      final content = await file.readAsString();
+
+      if (content.trim().isEmpty) {
+        throw FormatException('Schema file is empty: $actualPath');
+      }
+
+      if (!_isValidGraphQLSchema(content)) {
+        throw FormatException(
+            'File does not contain a valid GraphQL schema: $actualPath');
+      }
+
+      print('✅ Successfully read schema from local file');
+      return content;
+    } catch (e) {
+      print('❌ Error reading schema from file: $e');
+      rethrow;
+    }
+  }
+
+  /// Validates if content is a valid GraphQL schema
+  static bool _isValidGraphQLSchema(String content) {
+    final trimmedContent = content.trim();
+
+    if (trimmedContent.isEmpty) return false;
+
+    // Check for common GraphQL schema keywords
+    return trimmedContent.contains('type ') ||
+        trimmedContent.contains('interface ') ||
+        trimmedContent.contains('union ') ||
+        trimmedContent.contains('enum ') ||
+        trimmedContent.contains('input ') ||
+        trimmedContent.contains('scalar ') ||
+        trimmedContent.contains('schema ') ||
+        trimmedContent.contains('directive ') ||
+        // Check for comments that might precede actual schema
+        (trimmedContent.startsWith('#') &&
+            (trimmedContent.contains('type ') ||
+                trimmedContent.contains('schema ')));
   }
 
   static Future<String> downloadSchemaUsingIntrospectionQuery(

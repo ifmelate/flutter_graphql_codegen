@@ -1,0 +1,44 @@
+# GraphQL Codegen Configuration Examples
+# This file shows different ways to configure schema sources
+
+# Example 1: Local file path (relative)
+example_local_relative:
+  schema_url: schema.graphql
+  output_dir: lib/graphql/generated
+  document_paths:
+    - lib/graphql/documents/**/*.graphql
+
+# Example 2: Local file path (absolute)
+example_local_absolute:
+  schema_url: /path/to/project/schema.graphql
+  output_dir: lib/graphql/generated
+  document_paths:
+    - lib/graphql/documents/**/*.graphql
+
+# Example 3: File URL
+example_file_url:
+  schema_url: file:///path/to/project/schema.graphql
+  output_dir: lib/graphql/generated
+  document_paths:
+    - lib/graphql/documents/**/*.graphql
+
+# Example 4: HTTP URL (direct SDL)
+example_http_sdl:
+  schema_url: http://localhost:4000/graphql/sdl
+  output_dir: lib/graphql/generated
+  document_paths:
+    - lib/graphql/documents/**/*.graphql
+
+# Example 5: HTTPS URL (with introspection)
+example_https:
+  schema_url: https://api.example.com/graphql
+  output_dir: lib/graphql/generated
+  document_paths:
+    - lib/graphql/documents/**/*.graphql
+
+# Example 6: Alternative field names (schema instead of schema_url)
+example_alternative_names:
+  schema: lib/graphql/schema.graphql
+  output_dir: lib/graphql/generated
+  documents:
+    - lib/graphql/documents/**/*.graphql 
