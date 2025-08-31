@@ -92,11 +92,11 @@ void main() {
           contains(
               'class LocalDateConverter implements JsonConverter<DateTime, dynamic>'));
 
-      // Check that DateTimeConverter returns full ISO string
+      // Check that DateTimeConverter returns full ISO string with UTC conversion
       expect(
           generatedTypes,
           contains(
-              'String toJson(DateTime object) => object.toIso8601String();'));
+              'return object.toUtc().toIso8601String();'));
 
       // Check that LocalDateConverter returns date-only format
       expect(
