@@ -112,6 +112,8 @@ class SchemaAnalyzer {
         return isNullable ? 'String?' : 'String';
       case 'DateTime':
         return isNullable ? 'DateTime?' : 'DateTime';
+      case 'LocalDate':
+        return isNullable ? 'DateTime?' : 'DateTime';
       case 'Decimal':
         return isNullable ? 'Decimal?' : 'Decimal';
       case 'Short':
@@ -135,6 +137,7 @@ class SchemaAnalyzer {
       'Boolean',
       'ID',
       'DateTime',
+      'LocalDate',
       'Decimal',
       'Short',
       ...TypeRegistry.customScalars.where((s) => s != 'Decimal')

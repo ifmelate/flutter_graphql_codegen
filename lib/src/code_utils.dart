@@ -67,6 +67,8 @@ class GraphQLConstants {
     'Boolean': 'bool',
     'ID': 'String',
     'Short': 'int',
+    'DateTime': 'DateTime',
+    'LocalDate': 'DateTime',
   };
 }
 

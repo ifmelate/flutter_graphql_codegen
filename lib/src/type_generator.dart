@@ -16,7 +16,7 @@ class TypeGenerator {
         _generateScalarConverters(TypeRegistry.customScalars);
     final enumDefinitions = _generateEnumDefinitions(schemaDoc);
     final enumConverters = _generateEnumConverters(schemaDoc);
-    final typeDefinitions = _generateAllTypeDefinitions(schemaDoc);
+    final typeDefinitions = _generateAllTypeDefinitions(schemaDoc, schema);
 
     return '''${CodeGenerationConstants.generatedFileWarning}
 
@@ -71,7 +71,25 @@ class DateTimeConverter implements JsonConverter<DateTime, dynamic> {
   }
 
   @override
-  String toJson(DateTime object) => object.toString();
+  String toJson(DateTime object) {
+    // Always convert to UTC to ensure GraphQL-compatible format with timezone
+    // GraphQL DateTime scalar requires full ISO-8601 format with timezone
+    return object.toUtc().toIso8601String();
+  }
+}
+
+class LocalDateConverter implements JsonConverter<DateTime, dynamic> {
+  const LocalDateConverter();
+
+  @override
+  DateTime fromJson(dynamic json) {
+    if (json == null) return DateTime.now();
+    if (json is String) return DateTime.parse(json);
+    return DateTime.now();
+  }
+
+  @override
+  String toJson(DateTime object) => object.toIso8601String().split('T').first;
 }
 
 class LongConverter implements JsonConverter<Long, dynamic> {
@@ -240,7 +258,8 @@ ${_generateListConverterHelpers(TypeRegistry.customScalars)}
           scalar != 'DateTime' &&
           scalar != 'Short' &&
           scalar != 'Byte' &&
-          scalar != 'Long') {
+          scalar != 'Long' &&
+          scalar != 'LocalDate') {
         buffer.writeln('''
 class $scalar {
   final String value;
@@ -319,14 +338,15 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
   }
 
   /// Generates all type definitions from schema
-  static String _generateAllTypeDefinitions(DocumentNode schemaDoc) {
+  static String _generateAllTypeDefinitions(
+      DocumentNode schemaDoc, String schema) {
     final buffer = StringBuffer();
 
     for (final definition in schemaDoc.definitions) {
       if (definition is ObjectTypeDefinitionNode) {
-        buffer.writeln(_generateTypeDefinition(definition));
+        buffer.writeln(_generateTypeDefinition(definition, schema));
       } else if (definition is InputObjectTypeDefinitionNode) {
-        buffer.writeln(_generateInputTypeDefinition(definition));
+        buffer.writeln(_generateInputTypeDefinition(definition, schema));
       }
     }
 
@@ -334,7 +354,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
   }
 
   /// Generates a type definition for a specific object type
-  static String _generateTypeDefinition(ObjectTypeDefinitionNode typeNode) {
+  static String _generateTypeDefinition(ObjectTypeDefinitionNode typeNode,
+      [String schema = '']) {
     final typeName = typeNode.name.value;
     final fields = typeNode.fields;
 
@@ -375,8 +396,18 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
           buffer.writeln(
               '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
         } else if (cleanInnerType == 'DateTime') {
+          // Get original GraphQL type for list element to distinguish between DateTime and LocalDate
+          final originalListType = getOriginalGraphQLType(field.type);
+          if (originalListType == 'LocalDate') {
+            buffer.writeln(
+                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
+          } else {
+            buffer.writeln(
+                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+          }
+        } else if (cleanInnerType == 'LocalDate') {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
         } else if (cleanInnerType == 'Decimal') {
           buffer.writeln(
               '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
@@ -392,10 +423,23 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
               '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
         }
       } else if (baseType == 'DateTime') {
+        // Get original GraphQL type to distinguish between DateTime and LocalDate
+        final originalType = getOriginalGraphQLType(field.type);
+        print(
+            'DEBUG: Field $fieldName - baseType: $baseType, originalType: $originalType');
         if (needsJsonKeyName) {
           buffer.writeln('  @JsonKey(name: \'$fieldName\')');
         }
-        buffer.writeln('  @DateTimeConverter()');
+        if (originalType == 'LocalDate') {
+          buffer.writeln('  @LocalDateConverter()');
+        } else {
+          buffer.writeln('  @DateTimeConverter()');
+        }
+      } else if (baseType == 'LocalDate') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @LocalDateConverter()');
       } else if (baseType == 'Decimal') {
         if (needsJsonKeyName) {
           buffer.writeln('  @JsonKey(name: \'$fieldName\')');
@@ -495,7 +539,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
 
   /// Generates a type definition for a specific input type
   static String _generateInputTypeDefinition(
-      InputObjectTypeDefinitionNode inputNode) {
+      InputObjectTypeDefinitionNode inputNode,
+      [String schema = '']) {
     final typeName = inputNode.name.value;
     final fields = inputNode.fields;
 
@@ -534,8 +579,18 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
           buffer.writeln(
               '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
         } else if (cleanInnerType == 'DateTime') {
+          // Get original GraphQL type for list element to distinguish between DateTime and LocalDate
+          final originalListType = getOriginalGraphQLType(field.type);
+          if (originalListType == 'LocalDate') {
+            buffer.writeln(
+                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
+          } else {
+            buffer.writeln(
+                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+          }
+        } else if (cleanInnerType == 'LocalDate') {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
         } else if (cleanInnerType == 'Decimal') {
           buffer.writeln(
               '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
@@ -551,10 +606,23 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
               '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
         }
       } else if (baseType == 'DateTime') {
+        // Get original GraphQL type to distinguish between DateTime and LocalDate
+        final originalType = getOriginalGraphQLType(field.type);
+        print(
+            'DEBUG: Field $fieldName - baseType: $baseType, originalType: $originalType');
         if (needsJsonKeyName) {
           buffer.writeln('  @JsonKey(name: \'$fieldName\')');
         }
-        buffer.writeln('  @DateTimeConverter()');
+        if (originalType == 'LocalDate') {
+          buffer.writeln('  @LocalDateConverter()');
+        } else {
+          buffer.writeln('  @DateTimeConverter()');
+        }
+      } else if (baseType == 'LocalDate') {
+        if (needsJsonKeyName) {
+          buffer.writeln('  @JsonKey(name: \'$fieldName\')');
+        }
+        buffer.writeln('  @LocalDateConverter()');
       } else if (baseType == 'Decimal') {
         if (needsJsonKeyName) {
           buffer.writeln('  @JsonKey(name: \'$fieldName\')');
@@ -679,8 +747,18 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
           classBuffer.writeln(
               '  @JsonKey(defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
         } else if (cleanInnerType == 'DateTime') {
+          // Get original GraphQL type for list element to distinguish between DateTime and LocalDate
+          final originalListType = getOriginalGraphQLType(field.type);
+          if (originalListType == 'LocalDate') {
+            classBuffer.writeln(
+                '  @JsonKey(defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
+          } else {
+            classBuffer.writeln(
+                '  @JsonKey(defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+          }
+        } else if (cleanInnerType == 'LocalDate') {
           classBuffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+              '  @JsonKey(defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
         } else if (cleanInnerType == 'Decimal') {
           classBuffer.writeln(
               '  @JsonKey(defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
@@ -694,7 +772,13 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
           classBuffer.writeln('  @JsonKey(defaultValue: [])');
         }
       } else if (baseType == 'DateTime') {
-        classBuffer.writeln('  @DateTimeConverter()');
+        // Get original GraphQL type to distinguish between DateTime and LocalDate
+        final originalType = getOriginalGraphQLType(field.type);
+        if (originalType == 'LocalDate') {
+          classBuffer.writeln('  @LocalDateConverter()');
+        } else {
+          classBuffer.writeln('  @DateTimeConverter()');
+        }
       } else if (baseType == 'Decimal') {
         classBuffer.writeln('  @SafeDecimalConverter()');
       } else if (baseType == 'Long') {
@@ -783,7 +867,9 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
       if (scalar != 'Decimal' &&
           scalar != 'DateTime' &&
           scalar != 'Short' &&
-          scalar != 'Byte') {
+          scalar != 'Byte' &&
+          scalar != 'Long' &&
+          scalar != 'LocalDate') {
         buffer.writeln('''
 // Helper functions for $scalar list conversion
 List<$scalar>? _${scalar.toLowerCase()}ListFromJson(List<dynamic>? json) {
@@ -809,7 +895,18 @@ List<DateTime>? _dateTimeListFromJson(List<dynamic>? json) {
 
 List<String>? _dateTimeListToJson(List<DateTime>? list) {
   if (list == null) return null;
-  return list.map((item) => item.toString()).toList();
+  return list.map((item) => item.toIso8601String()).toList();
+}
+
+// Helper functions for LocalDate list conversion
+List<DateTime>? _localDateListFromJson(List<dynamic>? json) {
+  if (json == null) return null;
+  return json.map((item) => DateTime.parse(item.toString())).toList();
+}
+
+List<String>? _localDateListToJson(List<DateTime>? list) {
+  if (list == null) return null;
+  return list.map((item) => item.toIso8601String().split('T').first).toList();
 }
 ''');
 
@@ -839,5 +936,73 @@ List<dynamic>? _byteListToJson(List<Byte>? list) {
 ''');
 
     return buffer.toString();
+  }
+
+  /// Returns the appropriate DateTime converter for all fields
+  /// Always uses DateTimeConverter with full ISO string format
+  static String _getDateTimeConverterForField(
+      String fieldName, String typeName, String schema,
+      [Map<String, String>? dateConverterConfig]) {
+    // Always use DateTimeConverter - let the backend parse the ISO format appropriately
+    return 'DateTimeConverter';
+  }
+
+  /// Gets the original GraphQL type name from a TypeNode without mapping
+  static String getOriginalGraphQLType(TypeNode type) {
+    if (type is NamedTypeNode) {
+      return type.name.value;
+    } else if (type is ListTypeNode) {
+      return getOriginalGraphQLType(type.type);
+    }
+    return 'dynamic';
+  }
+
+  /// Gets the Dart type from a TypeNode but preserves original type name for converter logic
+  static String getDartTypeFromOriginal(
+      String originalType, bool isNullable, bool isList) {
+    String dartType;
+
+    switch (originalType) {
+      case 'Int':
+        dartType = 'int';
+        break;
+      case 'Float':
+        dartType = 'double';
+        break;
+      case 'String':
+        dartType = 'String';
+        break;
+      case 'Boolean':
+        dartType = 'bool';
+        break;
+      case 'ID':
+        dartType = 'String';
+        break;
+      case 'Short':
+        dartType = 'int';
+        break;
+      case 'DateTime':
+      case 'LocalDate':
+        dartType = 'DateTime';
+        break;
+      case 'Decimal':
+        dartType = 'Decimal';
+        break;
+      case 'Long':
+        dartType = 'Long';
+        break;
+      case 'Byte':
+        dartType = 'Byte';
+        break;
+      default:
+        dartType = originalType;
+        break;
+    }
+
+    if (isList) {
+      return isNullable ? 'List<$dartType>?' : 'List<$dartType>';
+    }
+
+    return isNullable ? '$dartType?' : dartType;
   }
 }
