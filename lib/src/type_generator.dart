@@ -938,14 +938,7 @@ List<dynamic>? _byteListToJson(List<Byte>? list) {
     return buffer.toString();
   }
 
-  /// Returns the appropriate DateTime converter for all fields
-  /// Always uses DateTimeConverter with full ISO string format
-  static String _getDateTimeConverterForField(
-      String fieldName, String typeName, String schema,
-      [Map<String, String>? dateConverterConfig]) {
-    // Always use DateTimeConverter - let the backend parse the ISO format appropriately
-    return 'DateTimeConverter';
-  }
+  // Method removed - was unused
 
   /// Gets the original GraphQL type name from a TypeNode without mapping
   static String getOriginalGraphQLType(TypeNode type) {

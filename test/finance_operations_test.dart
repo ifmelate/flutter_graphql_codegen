@@ -40,7 +40,6 @@ void main() {
         }
       ''';
 
-      final document = parseString(schema);
       final generatedTypes = TypeGenerator.generateTypesFile(schema);
 
       print('Generated types:');

@@ -1,5 +1,4 @@
 import 'package:test/test.dart';
-import 'package:gql/language.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 
 void main() {

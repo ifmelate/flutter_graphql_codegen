@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        dart-version: ["3.0.0", "stable"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Dart SDK
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ matrix.dart-version }}
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Verify package formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze package
+        run: dart analyze --fatal-infos
+
+      - name: Run tests with coverage
+        run: dart test --coverage=coverage
+
+      - name: Convert coverage to LCOV
+        run: dart run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info --packages=.dart_tool/package_config.json --report-on=lib
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: coverage/lcov.info
+
+      - name: Check pub publish dry run
+        run: dart pub publish --dry-run
