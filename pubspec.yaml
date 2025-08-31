@@ -14,7 +14,7 @@ topics:
   - type-safety
 
 environment:
-  sdk: ^3.1.0
+  sdk: ^3.2.0
 
 # Add regular dependencies here.
 dependencies:
