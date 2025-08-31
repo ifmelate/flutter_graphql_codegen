@@ -94,9 +94,7 @@ void main() {
 
       // Check that DateTimeConverter returns full ISO string with UTC conversion
       expect(
-          generatedTypes,
-          contains(
-              'return object.toUtc().toIso8601String();'));
+          generatedTypes, contains('return object.toUtc().toIso8601String();'));
 
       // Check that LocalDateConverter returns date-only format
       expect(
