@@ -1,6 +1,5 @@
 import 'package:test/test.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
-import 'package:gql/language.dart';
 
 void main() {
   group('FinanceOperations Real World Test', () {
