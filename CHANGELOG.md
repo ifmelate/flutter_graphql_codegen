@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - CI stability: make `dart analyze --fatal-infos` pass by removing an unused import in tests
 
+## [1.0.2-rc.1] - 2025-09-16
+
+### Fixed
+- Cross-platform path handling (Windows/macOS/Linux) in builder and schema downloader using `package:path`
+- Proper handling of `file://` URIs via `p.fromUri` and normalized local paths
+- Robust `index.dart` export generation using `p.basename` and POSIX `/` separators
+- Unified schema loading through `SchemaDownloader.downloadSchema`
+
+### Notes
+- This is a prerelease for Windows IDE/build_runner compatibility improvements
+
 ## [1.0.0] - 2025-06-08
 
 ### Added
