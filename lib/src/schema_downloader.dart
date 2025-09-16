@@ -1,6 +1,7 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
+import 'package:path/path.dart' as p;
 
 class SchemaDownloader {
   /// Downloads GraphQL schema from URL or reads from local file
@@ -61,12 +62,13 @@ class SchemaDownloader {
   /// Reads schema from local file
   static Future<String> _readFromLocalFile(String filePath) async {
     try {
-      // Handle file:// URLs
-      String actualPath = filePath;
+      // Handle file:// URLs and normalize cross-platform paths
+      String actualPath;
       if (filePath.startsWith('file://')) {
-        actualPath = filePath.substring(7); // Remove 'file://' prefix
+        actualPath = p.fromUri(Uri.parse(filePath));
         print('📂 Reading schema from file:// URL: $actualPath');
       } else {
+        actualPath = p.normalize(filePath);
         print('📂 Reading schema from local file: $actualPath');
       }
 
