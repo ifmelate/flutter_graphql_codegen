@@ -2,6 +2,7 @@ import 'package:test/test.dart';
 import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 import 'package:flutter_graphql_codegen/src/code_utils.dart';
+import 'package:flutter_graphql_codegen/src/config_context.dart';
 import 'package:flutter_graphql_codegen/src/schema_analyzer.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 
@@ -10,6 +11,12 @@ void main() {
     setUp(() {
       // Clear type registry before each test
       TypeRegistry.clear();
+      // These tests verify strict nullability behavior
+      CodegenConfigContext.strictNullability = true;
+    });
+
+    tearDown(() {
+      CodegenConfigContext.reset();
     });
 
     test('isNonNull extension should correctly detect non-null types', () {
@@ -95,8 +102,8 @@ void main() {
           reason: 'String! should map to String (non-nullable)');
       expect(nullableStringType, equals('String?'),
           reason: 'String should map to String? (nullable)');
-      expect(requiredListType, equals('List<String>?'),
-          reason: 'All lists are made nullable for graceful null handling');
+      expect(requiredListType, equals('List<String>'),
+          reason: 'Non-null list with non-null items should be List<String>');
       expect(nullableListType, equals('List<String?>?'),
           reason: 'Nullable list with nullable items');
     });
@@ -188,11 +195,11 @@ void main() {
           reason:
               'optionalSymptom (RepertorySymptomDTO) should not be required');
 
-      // Check list types - all lists are made nullable for graceful handling
+      // Check list types - respect schema nullability strictly
       expect(
-          generatedCode, contains('List<RepertorySymptomDTO>? childSymptoms;'),
+          generatedCode, contains('List<RepertorySymptomDTO> childSymptoms;'),
           reason:
-              'childSymptoms should be List<RepertorySymptomDTO>? even if defined as non-null list');
+              'childSymptoms should be List<RepertorySymptomDTO> for [RepertorySymptomDTO!]!');
       expect(generatedCode,
           contains('List<RepertorySymptomDTO?>? optionalChildSymptoms;'),
           reason:

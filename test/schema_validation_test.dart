@@ -1,11 +1,17 @@
 import 'package:test/test.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 import 'package:flutter_graphql_codegen/src/code_utils.dart';
+import 'package:flutter_graphql_codegen/src/config_context.dart';
 
 void main() {
   group('Schema Validation and Edge Cases', () {
     setUp(() {
       TypeRegistry.clear();
+      CodegenConfigContext.strictNullability = true;
+    });
+
+    tearDown(() {
+      CodegenConfigContext.reset();
     });
 
     group('Schema Parsing Edge Cases', () {
@@ -104,8 +110,8 @@ void main() {
         expect(generatedCode, contains('NestedType requiredNested;'));
         expect(generatedCode, contains('NestedType? nullableNested;'));
 
-        // All lists should be nullable for graceful handling
-        expect(generatedCode, contains('List<String>? requiredList;'));
+        // Lists should respect schema nullability
+        expect(generatedCode, contains('List<String> requiredList;'));
         expect(generatedCode, contains('List<String?>? nullableList;'));
         expect(generatedCode, contains('List<NestedType>? mixedList;'));
         expect(generatedCode,
