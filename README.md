@@ -35,6 +35,7 @@ A code generator for Flutter GraphQL applications that generates type-safe Dart 
   - Nested and recursive types
 - 🌐 **Multiple schema sources**: local files, HTTP/HTTPS URLs, file URLs
 - 🧪 **Comprehensive test coverage** with robust error handling
+ - 🔁 **Deterministic output**: stable sorting for enums/fields, write-only-if-changed, stable index export
 
 ## 🚀 Getting Started
 
@@ -61,7 +62,7 @@ dev_dependencies:
 targets:
   $default:
     builders:
-      flutter_graphql_codegen:
+      flutter_graphql_codegen|graphql_codegen:
         enabled: true
         options:
           config_path: "graphql_codegen.yaml"
@@ -78,6 +79,19 @@ schema_url: "lib/graphql/schema.graphql"  # Local file path
 output_dir: "lib/graphql/generated"
 document_paths:
   - "lib/graphql/documents/**/*.graphql"
+```
+
+##### Advanced Options
+
+```yaml
+# Optional advanced settings
+file_naming: snake_case       # snake_case | kebab-case | camelCase | PascalCase
+strict_nullability: true      # follow GraphQL '!' exactly for fields and lists
+emit_index: true              # generate index.dart exporter
+diagnostics_format: plain     # plain | json
+scalar_mapping:               # GraphQL scalar -> Dart type overrides
+  # JSON: dynamic
+  # Date: DateTime
 ```
 
 #### Schema Source Options
@@ -152,7 +166,7 @@ This is because the JSON serialization generator (`json_serializable`) needs the
 ```dart
 import 'package:graphql/client.dart';
 import 'lib/graphql/generated/types.dart';
-import 'lib/graphql/generated/get_user.dart';
+import 'lib/graphql/generated/index.dart';
 
 // Initialize GraphQL client
 final client = GraphQLClient(
@@ -160,17 +174,15 @@ final client = GraphQLClient(
   cache: GraphQLCache(),
 );
 
-// Use the generated extension method
-final result = await client.getUserQuery(
-  variables: GetUserArguments(id: 'user-123'),
-);
+// Use the generated extension methods
+final result = await client.getUser({'id': 'user-123'});
 
 if (result.hasException) {
   print('Error: ${result.exception}');
 } else {
-  final user = result.parsedData?.user;
+  // Or use typed helper to get parsed data directly
+  final user = await client.getUserData({'id': 'user-123'});
   print('User: ${user?.name} (${user?.email})');
-  print('Created: ${user?.createdAt}');
 }
 ```
 
@@ -242,28 +254,18 @@ subscription UserUpdated($id: ID!) {
 #### Generated Extensions Usage
 
 ```dart
-// Mutation with input validation
-final createResult = await client.createUserMutation(
-  variables: CreateUserArguments(
-    input: CreateUserInput(
-      name: 'John Doe',
-      email: 'john@example.com',
-      role: UserRole.moderator,
-    ),
-  ),
-);
+// Query
+final result = await client.getUser({'id': 'user-123'});
+final user = await client.getUserData({'id': 'user-123'});
 
-// Subscription with real-time updates
-final subscription = client.userUpdatedSubscription(
-  variables: UserUpdatedArguments(id: 'user-123'),
-);
-
-await for (final result in subscription.stream) {
-  if (result.data != null) {
-    final user = result.parsedData?.userUpdated;
-    print('User updated: ${user?.name}');
+// Mutation
+final created = await client.createUserData({
+  'input': {
+    'name': 'John Doe',
+    'email': 'john@example.com',
+    'role': 'MODERATOR',
   }
-}
+});
 ```
 
 ### Error Handling
@@ -301,8 +303,33 @@ if (result.hasException) {
 | Option | Description | Default | Required |
 |--------|-------------|---------|----------|
 | `schema_url` | GraphQL schema source (URL or file path) | - | ✅ |
-| `output_dir` | Output directory for generated files | `lib/generated` | ❌ |
-| `document_paths` | Glob patterns for GraphQL operation files | `**/*.graphql` | ❌ |
+| `output_dir` | Output directory for generated files | `lib/graphql/generated` | ❌ |
+| `document_paths` | Glob patterns for GraphQL operation files | `[]` | ✅ |
+| `file_naming` | Naming for generated operation files | `snake_case` | ❌ |
+| `strict_nullability` | Follow GraphQL nullability (`!`) exactly | `false` | ❌ |
+| `emit_index` | Emit `index.dart` exporter | `true` | ❌ |
+| `diagnostics_format` | Errors output format | `plain` | ❌ |
+| `scalar_mapping` | GraphQL scalar → Dart type map | `{}` | ❌ |
+
+> Note: `document_paths` or `documents` is required; the generator will fail if missing.
+
+### Deterministic Output
+
+- Definitions (types/enums) and fields are sorted by name for stable diffs
+- Enum values are sorted alphabetically
+- Files are written only when content changes (idempotent writes)
+- `index.dart` exports generated files in a deterministic order
+
+### Diagnostics and Error Codes
+
+- `CFG001`: Missing `schema_url`/`schema`
+- `CFG002`: Missing `document_paths`/`documents`
+- `CFG999`: Invalid configuration
+- `SCH400`: Invalid schema contents
+- `SCH404`: Schema file not found
+- `SCH500`: Schema download failed
+- `BLD100`: Operation parse/build error
+- `BLD200`: Index generation error
 
 ## 📚 API Reference
 
