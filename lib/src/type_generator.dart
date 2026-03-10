@@ -288,11 +288,22 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
   static String _generateEnumDefinitions(DocumentNode schemaDoc) {
     final buffer = StringBuffer();
 
-    for (final definition in schemaDoc.definitions) {
+    // Sort definitions deterministically by name where applicable
+    final defs = List<DefinitionNode>.from(schemaDoc.definitions);
+    defs.sort((a, b) {
+      final an = (a is TypeDefinitionNode) ? a.name.value : '';
+      final bn = (b is TypeDefinitionNode) ? b.name.value : '';
+      return an.compareTo(bn);
+    });
+
+    for (final definition in defs) {
       if (definition is EnumTypeDefinitionNode) {
         final enumName = definition.name.value;
         buffer.writeln('enum $enumName {');
-        for (final value in definition.values) {
+        // Sort enum values for determinism
+        final values = [...definition.values];
+        values.sort((a, b) => a.name.value.compareTo(b.name.value));
+        for (final value in values) {
           buffer.writeln('  ${value.name.value},');
         }
         buffer.writeln('}');
@@ -307,7 +318,15 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
   static String _generateEnumConverters(DocumentNode schemaDoc) {
     final buffer = StringBuffer();
 
-    for (final definition in schemaDoc.definitions) {
+    // Sort definitions deterministically
+    final defs = List<DefinitionNode>.from(schemaDoc.definitions);
+    defs.sort((a, b) {
+      final an = (a is TypeDefinitionNode) ? a.name.value : '';
+      final bn = (b is TypeDefinitionNode) ? b.name.value : '';
+      return an.compareTo(bn);
+    });
+
+    for (final definition in defs) {
       if (definition is EnumTypeDefinitionNode) {
         final enumName = definition.name.value;
         buffer.writeln(
@@ -317,7 +336,9 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         buffer.writeln('  @override');
         buffer.writeln('  $enumName fromJson(String json) {');
         buffer.writeln('    switch (json) {');
-        for (final value in definition.values) {
+        final values = [...definition.values];
+        values.sort((a, b) => a.name.value.compareTo(b.name.value));
+        for (final value in values) {
           buffer.writeln(
               "      case '${value.name.value}': return $enumName.${value.name.value};");
         }
@@ -342,7 +363,15 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
       DocumentNode schemaDoc, String schema) {
     final buffer = StringBuffer();
 
-    for (final definition in schemaDoc.definitions) {
+    // Sort definitions deterministically
+    final defs = List<DefinitionNode>.from(schemaDoc.definitions);
+    defs.sort((a, b) {
+      final an = (a is TypeDefinitionNode) ? a.name.value : '';
+      final bn = (b is TypeDefinitionNode) ? b.name.value : '';
+      return an.compareTo(bn);
+    });
+
+    for (final definition in defs) {
       if (definition is ObjectTypeDefinitionNode) {
         buffer.writeln(_generateTypeDefinition(definition, schema));
       } else if (definition is InputObjectTypeDefinitionNode) {
@@ -364,7 +393,11 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         '@JsonSerializable(includeIfNull: false, explicitToJson: true, fieldRename: FieldRename.none)');
     buffer.writeln('class $typeName {');
 
-    for (final field in fields) {
+    // Sort fields deterministically by name
+    final sortedFields = [...fields];
+    sortedFields.sort((a, b) => a.name.value.compareTo(b.name.value));
+
+    for (final field in sortedFields) {
       final fieldName = field.name.value;
       var fieldType = SchemaAnalyzer.getDartType(field.type);
       final baseType = fieldType
@@ -394,39 +427,38 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
             cleanInnerType != 'Byte') {
           // For lists of custom scalars, use JsonKey with converter
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <${cleanInnerType}>[], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
         } else if (cleanInnerType == 'DateTime') {
           // Get original GraphQL type for list element to distinguish between DateTime and LocalDate
           final originalListType = getOriginalGraphQLType(field.type);
           if (originalListType == 'LocalDate') {
             buffer.writeln(
-                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
+                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <DateTime>[], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
           } else {
             buffer.writeln(
-                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <DateTime>[], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
           }
         } else if (cleanInnerType == 'LocalDate') {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <DateTime>[], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
         } else if (cleanInnerType == 'Decimal') {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <Decimal>[], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
         } else if (cleanInnerType == 'Byte') {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _byteListFromJson, toJson: _byteListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <Byte>[], fromJson: _byteListFromJson, toJson: _byteListToJson)');
         } else if (TypeRegistry.isEnum(cleanInnerType)) {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <${cleanInnerType}>[])');
         } else {
           // For regular lists (including object lists), just use default value
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <${cleanInnerType}>[])');
         }
       } else if (baseType == 'DateTime') {
         // Get original GraphQL type to distinguish between DateTime and LocalDate
         final originalType = getOriginalGraphQLType(field.type);
-        print(
-            'DEBUG: Field $fieldName - baseType: $baseType, originalType: $originalType');
+        // Debug output removed for library neutrality
         if (needsJsonKeyName) {
           buffer.writeln('  @JsonKey(name: \'$fieldName\')');
         }
@@ -497,7 +529,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
 
     buffer.writeln();
     buffer.writeln('  $typeName({');
-    for (final field in fields) {
+    for (final field in sortedFields) {
       final fieldName = field.name.value;
       var fieldType = SchemaAnalyzer.getDartType(field.type);
 
@@ -549,7 +581,11 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
         '@JsonSerializable(includeIfNull: false, explicitToJson: true, fieldRename: FieldRename.none)');
     buffer.writeln('class $typeName {');
 
-    for (final field in fields) {
+    // Sort fields deterministically by name
+    final sortedFields = [...fields];
+    sortedFields.sort((a, b) => a.name.value.compareTo(b.name.value));
+
+    for (final field in sortedFields) {
       final fieldName = field.name.value;
       var fieldType = SchemaAnalyzer.getDartType(field.type);
       final baseType = fieldType
@@ -577,39 +613,38 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
             cleanInnerType != 'Byte') {
           // For lists of custom scalars, use JsonKey with converter
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <${cleanInnerType}>[], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
         } else if (cleanInnerType == 'DateTime') {
           // Get original GraphQL type for list element to distinguish between DateTime and LocalDate
           final originalListType = getOriginalGraphQLType(field.type);
           if (originalListType == 'LocalDate') {
             buffer.writeln(
-                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
+                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <DateTime>[], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
           } else {
             buffer.writeln(
-                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
+                '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <DateTime>[], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
           }
         } else if (cleanInnerType == 'LocalDate') {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <DateTime>[], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
         } else if (cleanInnerType == 'Decimal') {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <Decimal>[], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
         } else if (cleanInnerType == 'Byte') {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [], fromJson: _byteListFromJson, toJson: _byteListToJson)');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <Byte>[], fromJson: _byteListFromJson, toJson: _byteListToJson)');
         } else if (TypeRegistry.isEnum(cleanInnerType)) {
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <${cleanInnerType}>[])');
         } else {
           // For regular lists (including object lists), just use default value
           buffer.writeln(
-              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: [])');
+              '  @JsonKey(${needsJsonKeyName ? 'name: \'$fieldName\', ' : ''}defaultValue: const <${cleanInnerType}>[])');
         }
       } else if (baseType == 'DateTime') {
         // Get original GraphQL type to distinguish between DateTime and LocalDate
         final originalType = getOriginalGraphQLType(field.type);
-        print(
-            'DEBUG: Field $fieldName - baseType: $baseType, originalType: $originalType');
+        // Debug output removed for library neutrality
         if (needsJsonKeyName) {
           buffer.writeln('  @JsonKey(name: \'$fieldName\')');
         }
@@ -680,7 +715,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
 
     buffer.writeln();
     buffer.writeln('  $typeName({');
-    for (final field in fields) {
+    for (final field in sortedFields) {
       final fieldName = field.name.value;
       var fieldType = SchemaAnalyzer.getDartType(field.type);
 
@@ -849,7 +884,15 @@ class ${scalar}Converter implements JsonConverter<$scalar, String> {
   static String generateTypeDefinitions(DocumentNode schemaDoc) {
     final buffer = StringBuffer();
 
-    for (final definition in schemaDoc.definitions) {
+    // Sort deterministically
+    final defs = List<DefinitionNode>.from(schemaDoc.definitions);
+    defs.sort((a, b) {
+      final an = (a is TypeDefinitionNode) ? a.name.value : '';
+      final bn = (b is TypeDefinitionNode) ? b.name.value : '';
+      return an.compareTo(bn);
+    });
+
+    for (final definition in defs) {
       if (definition is ObjectTypeDefinitionNode) {
         buffer.writeln(generateClassForType(definition));
       }
@@ -924,8 +967,8 @@ List<String>? _decimalListToJson(List<Decimal>? list) {
 }
 
 // Helper functions for Byte list conversion
-List<Byte>? _byteListFromJson(List<dynamic>? json) {
-  if (json == null) return null;
+List<Byte> _byteListFromJson(List<dynamic>? json) {
+  if (json == null) return const <Byte>[];
   return json.map((item) => Byte.parse(item)).toList();
 }
 

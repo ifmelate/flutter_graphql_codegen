@@ -31,21 +31,15 @@ extension StringExtension on String {
 
 /// Extension for TypeNode to check if it's non-null
 extension TypeNodeExtensions on TypeNode {
-  /// Check if the type is non-null
-  /// This properly detects non-null types by checking for '!' suffix in GraphQL syntax
+  /// True if this node is marked non-null in the GraphQL AST
   bool get isNonNull {
-    final typeString = toString();
-
-    // Handle the case where toString() returns runtime type info instead of GraphQL syntax
-    if (typeString.startsWith('Instance of ')) {
-      // This shouldn't happen in normal cases with properly parsed GraphQL,
-      // but provides robustness. In this case, we cannot determine nullability
-      return false;
+    if (this is NamedTypeNode) {
+      return (this as NamedTypeNode).isNonNull;
     }
-
-    // Check if the type string ends with '!' indicating non-null
-    // This works for both simple types (String!) and complex types ([String!]!)
-    return typeString.endsWith('!');
+    if (this is ListTypeNode) {
+      return (this as ListTypeNode).isNonNull;
+    }
+    return false;
   }
 }
 
@@ -76,13 +70,16 @@ class GraphQLConstants {
 class TypeRegistry {
   static final Set<String> _customScalars = <String>{};
   static final Set<String> _enumTypes = <String>{};
+  static final Set<String> _objectTypes = <String>{};
 
   static Set<String> get customScalars => _customScalars;
   static Set<String> get enumTypes => _enumTypes;
+  static Set<String> get objectTypes => _objectTypes;
 
   static void clear() {
     _customScalars.clear();
     _enumTypes.clear();
+    _objectTypes.clear();
   }
 
   static void addCustomScalar(String scalar) {
@@ -91,6 +88,10 @@ class TypeRegistry {
 
   static void addEnumType(String enumType) {
     _enumTypes.add(enumType);
+  }
+
+  static void addObjectType(String typeName) {
+    _objectTypes.add(typeName);
   }
 
   static bool isEnum(String typeName) {
