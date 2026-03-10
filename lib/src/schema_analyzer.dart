@@ -3,6 +3,7 @@ library;
 
 import 'package:gql/ast.dart';
 import 'code_utils.dart';
+import 'config_context.dart';
 
 /// Utility class for analyzing GraphQL schemas
 class SchemaAnalyzer {
@@ -19,6 +20,8 @@ class SchemaAnalyzer {
           TypeRegistry.addCustomScalar(typeName);
         } else if (definition is EnumTypeDefinitionNode) {
           TypeRegistry.addEnumType(typeName);
+        } else if (definition is ObjectTypeDefinitionNode) {
+          TypeRegistry.addObjectType(typeName);
         }
       }
     }
@@ -168,13 +171,31 @@ class SchemaAnalyzer {
   /// Gets the Dart type from a TypeNode
   static String getDartType(TypeNode type) {
     if (type is NamedTypeNode) {
-      final typeName =
-          GraphQLConstants.scalarToDartType[type.name.value] ?? type.name.value;
-      return type.isNonNull ? typeName : '$typeName?';
+      final original = type.name.value;
+      // Allow scalar mapping override from config
+      final mapped = CodegenConfigContext.scalarMapping[original] ??
+          GraphQLConstants.scalarToDartType[original] ??
+          original;
+
+      final isObjectType = TypeRegistry.objectTypes.contains(original);
+
+      // Respect schema NonNull exactly for scalars/enums/custom scalars
+      if (!isObjectType) {
+        return type.isNonNull ? mapped : '$mapped?';
+      }
+
+      // For object types: we still respect NonNull, but mapping keeps class name
+      return type.isNonNull ? original : '$original?';
     } else if (type is ListTypeNode) {
+      // Compute element Dart type first (it will include '?' if nullable)
       final innerType = getDartType(type.type);
-      // Make all lists nullable to handle null values gracefully
-      return 'List<$innerType>?';
+      final listType = 'List<$innerType>';
+      // When strictNullability is off, lists are always nullable (legacy behavior).
+      // When on, respect the NonNull flag from the schema exactly.
+      if (!CodegenConfigContext.strictNullability) {
+        return '$listType?';
+      }
+      return type.isNonNull ? listType : '$listType?';
     }
     return 'dynamic';
   }

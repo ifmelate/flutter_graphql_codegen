@@ -154,56 +154,61 @@ $operationDocumentContent
     }
     // Handle objects
     else {
-      // Check if there are skippable fields for this type
+      // Check if there are skippable fields for this selection
       final hasSkippableFields =
           skippableFields?.any((field) => field.startsWith('$fieldName.')) ??
               false;
 
-      if (hasSkippableFields && baseType == 'SymptomsListDTO') {
-        // Special handling for SymptomsListDTO with @skip directive for repGlav
-        return """
-        try {
-          final data = result.data!;
-          if (!data.containsKey('$fieldName') || data['$fieldName'] == null) {
-            ${isNullable ? 'return null;' : 'throw Exception("Field \'$fieldName\' is null in GraphQL response");'}
-          }
-          
-          final json = data['$fieldName'];
-          if (json is! Map<String, dynamic>) {
-            throw Exception("Field '$fieldName' is not an object in GraphQL response");
-          }
-          
-          // Create modified JSON for SymptomsListDTO, setting repGlav to null if missing
-          final modifiedJson = Map<String, dynamic>.from(json);
-          if (!modifiedJson.containsKey('repGlav')) {
-            modifiedJson['repGlav'] = null;
-          }
-          
-          return $baseType.fromJson(modifiedJson);
-        } catch (e, stackTrace) {
-          ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
+      // Project-agnostic handling that ensures presence of keys for
+      // fields marked with @skip directive at the immediate child level
+      return """
+      try {
+        final data = result.data!;
+        if (!data.containsKey('$fieldName') || data['$fieldName'] == null) {
+          ${isNullable ? 'return null;' : 'throw Exception("Field \'$fieldName\' is null in GraphQL response");'}
         }
-        """;
-      } else {
-        return """
-        try {
-          final data = result.data!;
-          if (!data.containsKey('$fieldName') || data['$fieldName'] == null) {
-            ${isNullable ? 'return null;' : 'throw Exception("Field \'$fieldName\' is null in GraphQL response");'}
-          }
-          
-          final json = data['$fieldName'];
-          if (json is! Map<String, dynamic>) {
-            throw Exception("Field '$fieldName' is not an object in GraphQL response");
-          }
-          
-          return $baseType.fromJson(json);
-        } catch (e, stackTrace) {
-          ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
+
+        final json = data['$fieldName'];
+        if (json is! Map<String, dynamic>) {
+          throw Exception("Field '$fieldName' is not an object in GraphQL response");
         }
-        """;
+
+        final modifiedJson = Map<String, dynamic>.from(json);
+        ${hasSkippableFields ? _generateEnsureSkippableKeysSnippet(fieldName, skippableFields!) : ''}
+        return $baseType.fromJson(modifiedJson);
+      } catch (e, stackTrace) {
+        ${isNullable ? 'return null;' : 'throw Exception("Error converting GraphQL response to $returnType: \$e");'}
       }
+      """;
     }
+  }
+
+  /// Generates snippet that ensures immediate skippable child keys exist
+  static String _generateEnsureSkippableKeysSnippet(
+    String fieldName,
+    Set<String> skippableFields,
+  ) {
+    final prefix = '$fieldName.';
+    final immediateKeys =
+        skippableFields.where((f) => f.startsWith(prefix)).map((f) {
+      final rest = f.substring(prefix.length);
+      final first = rest.split('.').first;
+      return first;
+    }).toSet();
+
+    if (immediateKeys.isEmpty) {
+      return '';
+    }
+
+    final keysLiteral = immediateKeys.map((k) => "'${k}'").join(', ');
+    return """
+        const _skippableKeys = <String>{ $keysLiteral };
+        for (final k in _skippableKeys) {
+          if (!modifiedJson.containsKey(k)) {
+            modifiedJson[k] = null;
+          }
+        }
+    """;
   }
 
   /// Generates item conversion logic for list elements
