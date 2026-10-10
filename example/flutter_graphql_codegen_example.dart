@@ -93,8 +93,7 @@ void main() async {
     print('3. Example usage in your Flutter app:');
     print('''
 // Import the generated files
-import 'lib/graphql/generated/types.dart';
-import 'lib/graphql/generated/get_user.dart';
+import 'package:your_app/graphql/generated/index.dart';
 
 // Initialize GraphQL client
 final client = GraphQLClient(
@@ -102,18 +101,15 @@ final client = GraphQLClient(
   cache: GraphQLCache(),
 );
 
-// Use the generated extension
-final result = await client.getUserQuery(
-  variables: GetUserArguments(id: 'user-123'),
+// Typed data; throws OperationException on GraphQL/network errors
+final user = await client.getUserData(
+  GetUserVariables(id: 'user-123').toJson(),
 );
+print('User: \${user?.name} (\${user?.email})');
+print('Posts: \${user?.posts?.length ?? 0}');
 
-if (result.hasException) {
-  print('Error: \${result.exception}');
-} else {
-  final user = result.parsedData?.user;
-  print('User: \${user?.name} (\${user?.email})');
-  print('Posts: \${user?.posts?.length ?? 0}');
-}
+// Raw QueryResult when you need it
+final result = await client.getUser({'id': 'user-123'});
 ''');
 
     print('\n4. Type-safe benefits:');
