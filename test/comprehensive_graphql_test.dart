@@ -2,12 +2,18 @@ import 'package:test/test.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 import 'package:flutter_graphql_codegen/src/generator.dart';
 import 'package:flutter_graphql_codegen/src/code_utils.dart';
+import 'package:flutter_graphql_codegen/src/config_context.dart';
 
 void main() {
   group('Comprehensive GraphQL Test Suite', () {
     setUp(() {
       // Clear type registry before each test
       TypeRegistry.clear();
+      CodegenConfigContext.strictNullability = true;
+    });
+
+    tearDown(() {
+      CodegenConfigContext.reset();
     });
 
     group('Union Types', () {
@@ -35,10 +41,16 @@ void main() {
 
         final generatedCode = TypeGenerator.generateTypesFile(schema);
 
-        // Should generate all types
-        expect(generatedCode, contains('class User {'));
-        expect(generatedCode, contains('class Post {'));
+        // Should generate all types; members implement the union
+        expect(generatedCode, contains('class User implements SearchResult {'));
+        expect(generatedCode, contains('class Post implements SearchResult {'));
         expect(generatedCode, contains('class Query {'));
+
+        // Union becomes an abstract class dispatching on __typename
+        expect(generatedCode, contains('abstract class SearchResult {'));
+        expect(generatedCode, contains("case 'User':"));
+        expect(generatedCode, contains('return User.fromJson(json);'));
+        expect(generatedCode, contains('class UnknownSearchResult'));
 
         // Check that required fields are handled correctly
         expect(generatedCode, contains('required this.id,'));
@@ -77,9 +89,16 @@ void main() {
 
         final generatedCode = TypeGenerator.generateTypesFile(schema);
 
-        // Should generate all types
-        expect(generatedCode, contains('class Human {'));
-        expect(generatedCode, contains('class Droid {'));
+        // Should generate all types; implementations implement the interface
+        expect(generatedCode, contains('class Human implements Character {'));
+        expect(generatedCode, contains('class Droid implements Character {'));
+
+        // Interface becomes an abstract class with getters + dispatch
+        expect(generatedCode, contains('abstract class Character {'));
+        expect(generatedCode, contains('String get id;'));
+        expect(generatedCode, contains('return Human.fromJson(json);'));
+        expect(generatedCode,
+            contains('class UnknownCharacter implements Character {'));
 
         // Check interface fields are required
         expect(generatedCode, contains('required this.id,'));
@@ -128,11 +147,11 @@ void main() {
         expect(generatedCode, contains('class Department {'));
         expect(generatedCode, contains('class Employee {'));
 
-        // Check circular reference handling
+        // Check circular reference handling and strict list nullability
         expect(generatedCode, contains('Organization organization;'));
         expect(generatedCode, contains('Department department;'));
         expect(generatedCode, contains('Employee? manager;'));
-        expect(generatedCode, contains('List<Employee>? subordinates;'));
+        expect(generatedCode, contains('List<Employee> subordinates;'));
       });
     });
 
@@ -374,7 +393,9 @@ void main() {
 
         // Should generate mutation extension
         expect(operationCode, contains('extension CreateUserExtension'));
-        expect(operationCode, contains('mutate(options)'));
+        expect(operationCode, contains('await mutate('));
+        expect(operationCode,
+            contains('graphql.MutationOptions<Map<String, dynamic>>('));
         expect(operationCode, contains('CreateUserPayload'));
       });
     });
@@ -408,9 +429,27 @@ void main() {
 
         final typesCode = TypeGenerator.generateTypesFile(schema);
 
-        // Test that types are generated - skip operation generation for subscriptions since it's not fully supported
         expect(typesCode, contains('class User {'));
         expect(typesCode, contains('class Message {'));
+
+        final operationCode = GraphQLCodeGenerator.generateOperationFile(
+          schema,
+          r'subscription UserUpdated($id: ID!) { userUpdated(id: $id) { id } }',
+          'UserUpdated',
+          'subscription',
+          typesCode,
+        );
+
+        // Subscriptions are exposed as streams via GraphQLClient.subscribe
+        expect(
+            operationCode,
+            contains('Stream<graphql.QueryResult<Map<String, dynamic>>> '
+                'userUpdated('));
+        expect(operationCode, contains('return subscribe('));
+        expect(operationCode,
+            contains('graphql.SubscriptionOptions<Map<String, dynamic>>('));
+        expect(operationCode, contains('Stream<User> userUpdatedData('));
+        expect(operationCode, isNot(contains('query(')));
       });
     });
 
@@ -434,23 +473,22 @@ void main() {
 
         final generatedCode = TypeGenerator.generateTypesFile(schema);
 
-        // All lists should be made nullable for graceful handling
+        // Lists should respect schema nullability
+        expect(
+            generatedCode, contains('List<String> requiredListRequiredItems;'));
         expect(generatedCode,
-            contains('List<String>? requiredListRequiredItems;'));
-        expect(generatedCode,
-            contains('List<String?>? requiredListNullableItems;'));
+            contains('List<String?> requiredListNullableItems;'));
         expect(generatedCode,
             contains('List<String>? nullableListRequiredItems;'));
         expect(generatedCode,
             contains('List<String?>? nullableListNullableItems;'));
 
         // Nested lists
-        expect(generatedCode,
-            contains('List<List<String>?>? nestedRequiredList;'));
+        expect(
+            generatedCode, contains('List<List<String>> nestedRequiredList;'));
         expect(generatedCode,
             contains('List<List<String?>?>? nestedNullableList;'));
-        expect(
-            generatedCode, contains('List<List<String>?>? mixedNestedList;'));
+        expect(generatedCode, contains('List<List<String>?> mixedNestedList;'));
 
         // List fields should have default values in constructor
         expect(generatedCode, contains('= const []'));
@@ -687,8 +725,8 @@ void main() {
 
         // Should handle recursive references
         expect(generatedCode, contains('Category? parent;'));
-        expect(generatedCode, contains('List<Category>? children;'));
-        expect(generatedCode, contains('List<Product>? relatedProducts;'));
+        expect(generatedCode, contains('List<Category> children;'));
+        expect(generatedCode, contains('List<Product> relatedProducts;'));
         expect(generatedCode, contains('Category category;'));
       });
     });

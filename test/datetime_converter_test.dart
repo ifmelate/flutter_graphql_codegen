@@ -110,7 +110,7 @@ void main() {
       expect(
           generatedTypes,
           contains(
-              'String toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
+              'dynamic toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
     });
 
     test('should fix GraphQL DateTime parsing error scenario', () {

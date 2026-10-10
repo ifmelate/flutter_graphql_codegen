@@ -1,8 +1,16 @@
 import 'package:test/test.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
+import 'package:flutter_graphql_codegen/src/config_context.dart';
 
 void main() {
   group('LocalDate Converter Tests', () {
+    setUp(() {
+      CodegenConfigContext.strictNullability = true;
+    });
+
+    tearDown(() {
+      CodegenConfigContext.reset();
+    });
     test('should generate LocalDateConverter for LocalDate scalar fields', () {
       const schema = '''
         scalar LocalDate
@@ -51,7 +59,7 @@ void main() {
       expect(
           generatedTypes,
           contains(
-              'String toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
+              'dynamic toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
 
       // Check that FinanceOperationsInput uses LocalDateConverter for dateFrom and dateTo
       expect(generatedTypes, contains('@LocalDateConverter()'));
@@ -100,7 +108,7 @@ void main() {
       expect(
           generatedTypes,
           contains(
-              'String toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
+              'dynamic toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
 
       // Verify that proper converters are applied to fields
       final lines = generatedTypes.split('\n');
@@ -208,7 +216,7 @@ void main() {
       expect(generatedTypes, contains('DateTime? dateTo;'));
       expect(generatedTypes, contains('DateTime createdAt;'));
       expect(generatedTypes, contains('DateTime? updatedAt;'));
-      expect(generatedTypes, contains('List<DateTime>? timestamps;'));
+      expect(generatedTypes, contains('List<DateTime> timestamps;'));
       expect(generatedTypes, contains('List<DateTime?>? dates;'));
 
       // Check that proper converters are applied
