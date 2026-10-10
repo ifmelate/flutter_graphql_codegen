@@ -15,6 +15,10 @@ class GraphQLCodegenConfig {
   final String diagnosticsFormat; // plain | json
   final Map<String, String> scalarMapping; // GraphQL scalar -> Dart type
 
+  /// HTTP headers sent when downloading a remote schema. Values may reference
+  /// environment variables as `${NAME}`.
+  final Map<String, String> schemaHeaders;
+
   GraphQLCodegenConfig({
     required this.schemaUrl,
     required this.outputDir,
@@ -24,7 +28,9 @@ class GraphQLCodegenConfig {
     this.emitIndex = true,
     this.diagnosticsFormat = 'plain',
     Map<String, String>? scalarMapping,
-  }) : scalarMapping = scalarMapping ?? const {};
+    Map<String, String>? schemaHeaders,
+  })  : scalarMapping = scalarMapping ?? const {},
+        schemaHeaders = schemaHeaders ?? const {};
 
   factory GraphQLCodegenConfig.fromYaml(String yamlString) {
     var diagFormat = 'plain';
@@ -41,11 +47,8 @@ class GraphQLCodegenConfig {
         );
       }
 
-      // Handle different schema source types:
-      // 1. HTTP/HTTPS URLs - use as is
-      // 2. Local file paths - can use as is (downloader will handle)
-      // 3. file:// URLs - use as is
-      print('📋 Config: schema source = $schemaUrl');
+      // Schema source may be an HTTP(S) URL, a local path or a file:// URL;
+      // SchemaDownloader handles all of them.
 
       final outputDir =
           yamlMap['output_dir'] as String? ?? 'lib/graphql/generated';
@@ -73,7 +76,7 @@ class GraphQLCodegenConfig {
         throw CodegenException(
           CodegenErrorCodes.cfgInvalid,
           'Invalid file_naming "$fileNaming". '
-              'Valid options: ${validFileNamingModes.join(', ')}',
+          'Valid options: ${validFileNamingModes.join(', ')}',
         );
       }
       final strictNullability = yamlMap['strict_nullability'] as bool? ?? false;
@@ -95,6 +98,24 @@ class GraphQLCodegenConfig {
         }
       }
 
+      // Headers for remote schema download (e.g. auth)
+      final schemaHeaders = <String, String>{};
+      final yamlHeaders = yamlMap['schema_headers'];
+      if (yamlHeaders is yaml.YamlMap) {
+        for (final entry in yamlHeaders.entries) {
+          final k = entry.key?.toString();
+          final v = entry.value?.toString();
+          if (k != null && v != null) {
+            schemaHeaders[k] = expandEnvironmentVariables(v);
+          }
+        }
+      } else if (yamlHeaders != null) {
+        throw CodegenException(
+          CodegenErrorCodes.cfgInvalid,
+          'schema_headers must be a map of header name to value',
+        );
+      }
+
       return GraphQLCodegenConfig(
         schemaUrl: schemaUrl,
         outputDir: outputDir,
@@ -104,6 +125,7 @@ class GraphQLCodegenConfig {
         emitIndex: emitIndex,
         diagnosticsFormat: diagnosticsFormat,
         scalarMapping: scalarMappingMap,
+        schemaHeaders: schemaHeaders,
       );
     } catch (e) {
       if (e is CodegenException) {
@@ -117,7 +139,28 @@ class GraphQLCodegenConfig {
     }
   }
 
-  List<dynamic> resolveDocumentPaths() {
+  /// Replaces `${NAME}` with the value of environment variable `NAME`.
+  ///
+  /// Throws a [CodegenException] when a referenced variable is not set, so a
+  /// missing token fails loudly instead of sending an empty header.
+  static String expandEnvironmentVariables(String value,
+      [Map<String, String>? environment]) {
+    final env = environment ?? Platform.environment;
+    return value.replaceAllMapped(RegExp(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}'),
+        (m) {
+      final name = m.group(1)!;
+      final resolved = env[name];
+      if (resolved == null) {
+        throw CodegenException(
+          CodegenErrorCodes.cfgInvalid,
+          'Environment variable "$name" referenced in schema_headers is not set',
+        );
+      }
+      return resolved;
+    });
+  }
+
+  List<String> resolveDocumentPaths() {
     return documentPaths.expand((path) {
       final glob = Glob(path);
       return glob.listSync().whereType<File>().map((file) => file.path);

@@ -16,12 +16,47 @@ class SchemaAnalyzer {
         final typeName = definition.name.value;
         if (definition is ScalarTypeDefinitionNode &&
             !GraphQLConstants.builtInScalars.contains(typeName) &&
-            typeName != 'Decimal') {
+            typeName != 'Decimal' &&
+            // Mapped scalars use the configured Dart type, no wrapper class.
+            !CodegenConfigContext.scalarMapping.containsKey(typeName)) {
           TypeRegistry.addCustomScalar(typeName);
         } else if (definition is EnumTypeDefinitionNode) {
           TypeRegistry.addEnumType(typeName);
         } else if (definition is ObjectTypeDefinitionNode) {
           TypeRegistry.addObjectType(typeName);
+        } else if (definition is InterfaceTypeDefinitionNode) {
+          TypeRegistry.addInterfaceType(typeName);
+        } else if (definition is UnionTypeDefinitionNode) {
+          TypeRegistry.addUnionType(typeName);
+        } else if (definition is InputObjectTypeDefinitionNode) {
+          TypeRegistry.addInputType(typeName);
+        }
+      }
+    }
+
+    // Second pass: relationships between concrete and abstract types.
+    for (final definition in schemaDoc.definitions) {
+      if (definition is ObjectTypeDefinitionNode) {
+        final typeName = definition.name.value;
+        for (final iface in definition.interfaces) {
+          final ifaceName = iface.name.value;
+          if (!TypeRegistry.interfaceTypes.contains(ifaceName)) continue;
+          TypeRegistry.addSupertype(typeName, ifaceName);
+          TypeRegistry.addPossibleType(ifaceName, typeName);
+        }
+      } else if (definition is InterfaceTypeDefinitionNode) {
+        for (final iface in definition.interfaces) {
+          final ifaceName = iface.name.value;
+          if (!TypeRegistry.interfaceTypes.contains(ifaceName)) continue;
+          TypeRegistry.addSupertype(definition.name.value, ifaceName);
+        }
+      } else if (definition is UnionTypeDefinitionNode) {
+        final unionName = definition.name.value;
+        for (final member in definition.types) {
+          final memberName = member.name.value;
+          if (!TypeRegistry.objectTypes.contains(memberName)) continue;
+          TypeRegistry.addSupertype(memberName, unionName);
+          TypeRegistry.addPossibleType(unionName, memberName);
         }
       }
     }
@@ -47,12 +82,8 @@ class SchemaAnalyzer {
   static ObjectTypeDefinitionNode? findRootType(
       DocumentNode schemaDoc, String operationType) {
     operationType = operationType.toLowerCase();
-    if (operationType == 'operationtype.mutation') {
-      operationType = 'mutation';
-    } else if (operationType == 'operationtype.query') {
-      operationType = 'query';
-    } else if (operationType == 'operationtype.subscription') {
-      operationType = 'subscription';
+    if (operationType.startsWith('operationtype.')) {
+      operationType = operationType.substring('operationtype.'.length);
     }
 
     for (final definition in schemaDoc.definitions) {
