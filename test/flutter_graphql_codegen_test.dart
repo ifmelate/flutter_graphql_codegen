@@ -67,20 +67,12 @@ void main() {
     });
   });
 
-  group('Legacy Tests', () {
-    final awesome = Awesome();
-
-    setUp(() {
-      // Additional setup goes here.
-    });
-
-    test('First Test', () {
-      expect(awesome.isAwesome, isTrue);
+  group('Builder factory', () {
+    test('creates a builder from the config file', () {
       final builderOptions = BuilderOptions({
         'config_path': 'test/fixtures/graphql_codegen.yaml',
       });
-      graphqlCodegenBuilder(builderOptions);
-      /* builder.build(BuildStep()); */
+      expect(graphqlCodegenBuilder(builderOptions), isA<Builder>());
     });
   });
 }

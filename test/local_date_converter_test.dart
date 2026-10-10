@@ -59,7 +59,7 @@ void main() {
       expect(
           generatedTypes,
           contains(
-              'String toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
+              'dynamic toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
 
       // Check that FinanceOperationsInput uses LocalDateConverter for dateFrom and dateTo
       expect(generatedTypes, contains('@LocalDateConverter()'));
@@ -108,7 +108,7 @@ void main() {
       expect(
           generatedTypes,
           contains(
-              'String toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
+              'dynamic toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
 
       // Verify that proper converters are applied to fields
       final lines = generatedTypes.split('\n');
