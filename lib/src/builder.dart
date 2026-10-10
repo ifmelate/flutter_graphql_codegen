@@ -2,18 +2,40 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:build/build.dart';
+import 'package:glob/glob.dart';
+import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 import 'package:flutter_graphql_codegen/src/schema_downloader.dart';
-import 'package:flutter_graphql_codegen/src/utils.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 import 'package:flutter_graphql_codegen/src/client_extension_generator.dart';
 import 'package:flutter_graphql_codegen/src/operation_analyzer.dart';
+import 'package:path/path.dart' as p;
 
 import 'config.dart';
+import 'config_context.dart';
+import 'diagnostics.dart';
+import 'document_utils.dart';
+import 'naming.dart';
+
+/// Schema-derived data shared by all operations of a build.
+class _SchemaArtifacts {
+  final DocumentNode schemaDoc;
+  final String typesCode;
+  final Set<String> definedTypes;
+
+  _SchemaArtifacts(this.schemaDoc, this.typesCode, this.definedTypes);
+}
 
 class GraphQLCodegenBuilder implements Builder {
   final GraphQLCodegenConfig config;
-  static bool _typesFileGenerated = false;
+
+  /// Remote schemas are downloaded once per builder instance (i.e. once per
+  /// `build_runner build`; restart `watch` to pick up remote schema changes).
+  final Map<String, Future<String>> _remoteSchemas = {};
+
+  String? _cachedSchemaText;
+  _SchemaArtifacts? _cachedArtifacts;
+  String? _lastWrittenTypes;
 
   GraphQLCodegenBuilder(this.config);
 
@@ -26,94 +48,234 @@ class GraphQLCodegenBuilder implements Builder {
       return;
     }
 
-    // Skip schema files
-    if (inputId.path.contains('schema.graphql')) {
+    final content = await buildStep.readAsString(inputId);
+    final DocumentNode document;
+    try {
+      document = gql_lang.parseString(content, url: inputId.path);
+    } catch (e, st) {
+      throw _report(CodegenException(
+        CodegenErrorCodes.buildOperationParse,
+        'Failed to parse ${inputId.path}: $e',
+        cause: e,
+        stackTrace: st,
+      ));
+    }
+
+    // Schema files and fragment-only files produce no operation files.
+    final operations =
+        document.definitions.whereType<OperationDefinitionNode>().toList();
+    if (operations.isEmpty ||
+        document.definitions.any((d) => d is TypeSystemDefinitionNode)) {
       return;
     }
 
-    print('🔧 Processing GraphQL operation: ${inputId.path}');
+    log.fine('Processing GraphQL operations in ${inputId.path}');
 
-    // Load schema (either from URL or local file)
-    String schema;
-    if (config.schemaUrl.startsWith('http://') ||
-        config.schemaUrl.startsWith('https://')) {
-      // Download from URL
-      schema = await SchemaDownloader.downloadSchema(config.schemaUrl);
-    } else {
-      // Read from local file
+    final artifacts = _artifactsFor(await _loadSchema(buildStep));
+    await _writeTypesFile(artifacts.typesCode);
+
+    final fragments = await _externalFragments(buildStep, document);
+
+    for (final operation in operations) {
+      final operationName = operation.name?.value;
+      if (operationName == null) {
+        log.warning('Skipping anonymous ${operation.type.name} in '
+            '${inputId.path}: name the operation to generate code for it.');
+        continue;
+      }
+
+      final String code;
       try {
-        final schemaFile = File(config.schemaUrl);
-        if (await schemaFile.exists()) {
-          schema = await schemaFile.readAsString();
-        } else {
-          throw Exception('Schema file not found: ${config.schemaUrl}');
-        }
-      } catch (e) {
-        print('❌ Error reading schema file: $e');
-        throw Exception('Failed to read schema from ${config.schemaUrl}: $e');
+        code = ClientExtensionGenerator.generateOperationFile(
+          operationName,
+          operation.type.name,
+          content,
+          artifacts.schemaDoc,
+          artifacts.definedTypes,
+          fragments: fragments,
+        );
+      } on CodegenException catch (e) {
+        throw _report(e);
+      }
+
+      await _writeToOutputDirectory(operationName, code);
+      log.fine('Generated ${config.outputDir}/'
+          '${_generateOutputFileName(operationName)}');
+    }
+
+    // Generate index file after processing operations (if enabled)
+    if (config.emitIndex) {
+      await _generateIndexFile();
+    }
+  }
+
+  CodegenException _report(CodegenException e) {
+    log.severe(e.format(format: CodegenConfigContext.diagnosticsFormat));
+    return e;
+  }
+
+  /// Loads the schema text.
+  ///
+  /// Local schemas inside the package are read through [buildStep] so that
+  /// editing the schema triggers regeneration.
+  Future<String> _loadSchema(BuildStep buildStep) async {
+    final source = config.schemaUrl;
+
+    if (source.startsWith('http://') || source.startsWith('https://')) {
+      final cached = _remoteSchemas[source];
+      if (cached != null) return cached;
+      final future = SchemaDownloader.downloadSchema(source,
+          headers: config.schemaHeaders);
+      _remoteSchemas[source] = future;
+      try {
+        return await future;
+      } catch (e, st) {
+        _remoteSchemas.remove(source);
+        if (e is CodegenException) throw _report(e);
+        throw _report(CodegenException(
+          CodegenErrorCodes.schemaDownloadFailed,
+          'Failed to download schema from $source: $e',
+          cause: e,
+          stackTrace: st,
+        ));
       }
     }
 
-    // Read GraphQL document content
-    final content = await buildStep.readAsString(inputId);
+    final assetId = _schemaAssetId(buildStep.inputId.package);
+    if (assetId != null && await buildStep.canRead(assetId)) {
+      return buildStep.readAsString(assetId);
+    }
 
-    // Extract operation name and type from document
-    final operationName = _extractOperationName(content);
-    final operationType = _extractOperationType(content);
+    try {
+      return await SchemaDownloader.downloadSchema(source);
+    } on FileSystemException catch (e, st) {
+      throw _report(CodegenException(
+        CodegenErrorCodes.schemaFileNotFound,
+        'Schema file not found: $source',
+        cause: e,
+        stackTrace: st,
+      ));
+    } on FormatException catch (e, st) {
+      throw _report(CodegenException(
+        CodegenErrorCodes.schemaInvalid,
+        e.message,
+        cause: e,
+        stackTrace: st,
+      ));
+    }
+  }
 
-    if (operationName != null && operationType != null) {
-      print('📝 Generating code for: $operationName ($operationType)');
+  /// The schema as an asset of [package], if it is a path inside the package.
+  AssetId? _schemaAssetId(String package) {
+    final relative = _packageRelativePath(config.schemaUrl);
+    return relative == null ? null : AssetId(package, relative);
+  }
 
-      // Generate client extension for this specific operation
-      final schemaDoc = gql_lang.parseString(schema);
-      final typesCode = TypeGenerator.generateTypesFile(schema);
+  /// Converts a local path or `file://` URI into a package-relative POSIX
+  /// path, or returns null when it points outside the current package.
+  static String? _packageRelativePath(String path) {
+    var local = path;
+    if (local.startsWith('file://')) {
+      local = p.fromUri(Uri.parse(local));
+    }
+    if (p.isAbsolute(local)) {
+      local = p.relative(local, from: Directory.current.path);
+    }
+    final posix = p.posix.normalize(local.replaceAll(r'\', '/'));
+    if (posix.startsWith('../') || posix == '..' || p.posix.isAbsolute(posix)) {
+      return null;
+    }
+    return posix;
+  }
 
-      // Generate types.dart file only once
-      if (!_typesFileGenerated) {
-        await _generateTypesFileIfNeeded(typesCode);
-        _typesFileGenerated = true;
-      }
+  _SchemaArtifacts _artifactsFor(String schemaText) {
+    final cached = _cachedArtifacts;
+    if (cached != null && schemaText == _cachedSchemaText) return cached;
 
-      final definedTypes = OperationAnalyzer.extractDefinedTypes(typesCode);
-      final clientExtension = ClientExtensionGenerator.generateClientExtension(
-        operationName,
-        operationType,
-        content,
+    try {
+      final schemaDoc = gql_lang.parseString(schemaText);
+      final typesCode = TypeGenerator.generateTypesFile(schemaText);
+      final artifacts = _SchemaArtifacts(
         schemaDoc,
-        definedTypes,
+        typesCode,
+        OperationAnalyzer.extractDefinedTypes(typesCode),
       );
+      _cachedSchemaText = schemaText;
+      _cachedArtifacts = artifacts;
+      return artifacts;
+    } catch (e, st) {
+      if (e is CodegenException) throw _report(e);
+      throw _report(CodegenException(
+        CodegenErrorCodes.schemaInvalid,
+        'Failed to process schema ${config.schemaUrl}: $e',
+        cause: e,
+        stackTrace: st,
+      ));
+    }
+  }
 
-      // Create operation file content
-      final operationFileCode = '''// AUTO-GENERATED FILE - DO NOT EDIT
-// Generated by flutter_graphql_codegen
-// Operation: $operationName ($operationType)
+  /// Fragments defined in other documents (matched by `document_paths`) that
+  /// [document] spreads but does not define itself.
+  Future<Map<String, FragmentDefinitionNode>> _externalFragments(
+      BuildStep buildStep, DocumentNode document) async {
+    final local = DocumentUtils.collectFragments([document]);
+    final missing = _fragmentSpreads(document).difference(local.keys.toSet());
+    if (missing.isEmpty) return const {};
 
-import 'package:graphql/client.dart' as graphql;
-import 'types.dart';
+    final docs = <DocumentNode>[];
+    final seen = <AssetId>{buildStep.inputId};
+    for (final pattern in config.documentPaths) {
+      final relative = _packageRelativePath(pattern);
+      if (relative == null) continue;
+      await for (final id in buildStep.findAssets(Glob(relative))) {
+        if (!seen.add(id)) continue;
+        final text = await buildStep.readAsString(id);
+        if (!text.contains('fragment')) continue;
+        try {
+          docs.add(gql_lang.parseString(text, url: id.path));
+        } catch (_) {
+          // Parse errors are reported when that document itself is built.
+        }
+      }
+    }
+    // Missing fragments still left are reported by the generator.
+    return DocumentUtils.collectFragments(docs);
+  }
 
-$clientExtension
-''';
-
-      // Generate files directly in output directory specified in config
-      await _writeToOutputDirectory(operationName, operationFileCode);
-
-      print(
-          '📝 Generated: ${config.outputDir}/${_generateOutputFileName(operationName)}');
+  static Set<String> _fragmentSpreads(DocumentNode document) {
+    final names = <String>{};
+    void visit(SelectionSetNode set) {
+      for (final sel in set.selections) {
+        if (sel is FragmentSpreadNode) {
+          names.add(sel.name.value);
+        } else if (sel is FieldNode && sel.selectionSet != null) {
+          visit(sel.selectionSet!);
+        } else if (sel is InlineFragmentNode) {
+          visit(sel.selectionSet);
+        }
+      }
     }
 
-    // Генерируем index файл после обработки всех операций
-    await _generateIndexFile();
+    for (final def in document.definitions) {
+      if (def is OperationDefinitionNode) visit(def.selectionSet);
+      if (def is FragmentDefinitionNode) visit(def.selectionSet);
+    }
+    return names;
   }
 
   /// Generates index.dart file with all operations
   Future<void> _generateIndexFile() async {
     try {
-      // Найти все сгенерированные .g.dart файлы
+      // Find all generated .g.dart files
       final generatedFiles = <File>[];
       await _findGeneratedFiles(generatedFiles);
 
       final exports = <String>[];
       final operations = <String>[];
+
+      // Sort files deterministically by basename
+      generatedFiles
+          .sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
 
       for (final file in generatedFiles) {
         final content = await file.readAsString();
@@ -122,25 +284,22 @@ $clientExtension
           continue;
         }
 
-        // Файлы теперь в той же папке что и index.dart, поэтому просто используем имя файла
-        final fileName = file.path.split('/').last;
+        // Files are in the same folder as index.dart, use a safe file name
+        final fileName = p.basename(file.path);
         exports.add("export '$fileName';");
 
-        // Извлекаем имя операции из имени файла (snake_case_graphql.g.dart -> SnakeCaseGraphql)
-        final operationName = fileName
-            .replaceAll('_graphql.g.dart', '')
-            .split('_')
-            .map((word) => word[0].toUpperCase() + word.substring(1))
-            .join('');
+        // Extract operation name from file name, respecting the configured naming mode
+        final baseName = fileName.replaceAll('_graphql.g.dart', '');
+        final operationName = _fileBaseNameToOperationName(baseName);
         operations.add('// $operationName');
       }
 
       if (exports.isEmpty) {
-        print('📁 No generated GraphQL files found for index');
+        log.fine('No generated GraphQL files found for index');
         return;
       }
 
-      // Создаем index файл
+      // Create index file
       final indexContent = '''// AUTO-GENERATED FILE - DO NOT EDIT
 // Generated by flutter_graphql_codegen
 // GraphQL operations index
@@ -156,62 +315,63 @@ ${operations.join('\n')}
 
 // Usage:
 // import 'package:your_app/${config.outputDir}/index.dart';
-// 
+//
 // final client = GraphQLClient(...);
 // final result = await client.getUserProfile({'culture': 'en'});
 ''';
 
-      // Создаем директорию если не существует
+      // Create the directory if it does not exist
       final outputDir = Directory(config.outputDir);
       if (!outputDir.existsSync()) {
         await outputDir.create(recursive: true);
       }
 
-      // Записываем index файл
-      final indexFile = File('${config.outputDir}/index.dart');
-      await indexFile.writeAsString(indexContent);
-
-      print('📝 Generated index file: ${indexFile.path}');
-      print('✅ Index complete! Found ${exports.length} operations');
-    } catch (e) {
-      print('⚠️ Error generating index file: $e');
+      // Write index file
+      final indexFile = File(p.join(config.outputDir, 'index.dart'));
+      await _writeIfChanged(indexFile, indexContent);
+    } catch (e, st) {
+      throw _report(CodegenException(
+          CodegenErrorCodes.buildIndexFailed, 'Failed to generate index.dart',
+          cause: e, stackTrace: st));
     }
   }
 
-  /// Generates types.dart file
-  Future<void> _generateTypesFileIfNeeded(String typesCode) async {
-    // Создаем директорию если не существует
+  /// Writes types.dart when its content changed since the last write.
+  Future<void> _writeTypesFile(String typesCode) async {
+    if (typesCode == _lastWrittenTypes) return;
+
+    // Create the directory if it does not exist
     final outputDir = Directory(config.outputDir);
     if (!outputDir.existsSync()) {
       await outputDir.create(recursive: true);
     }
 
-    // Всегда генерируем файл types.dart
-    final typesFile = File('${config.outputDir}/types.dart');
-    await typesFile.writeAsString(typesCode);
-    print('📝 Generated types file: ${typesFile.path}');
+    final typesFile = File(p.join(config.outputDir, 'types.dart'));
+    await _writeIfChanged(typesFile, typesCode);
+    _lastWrittenTypes = typesCode;
+    log.fine('Generated types file: ${typesFile.path}');
   }
 
   /// Writes operation file to the configured output directory
   Future<void> _writeToOutputDirectory(
       String operationName, String content) async {
-    // Создаем директорию если не существует
+    // Create the directory if it does not exist
     final outputDir = Directory(config.outputDir);
     if (!outputDir.existsSync()) {
       await outputDir.create(recursive: true);
     }
 
-    // Создаем файл в output директории
+    // Create the file in the output directory
     final fileName = _generateOutputFileName(operationName);
-    final filePath = '${config.outputDir}/$fileName';
+    final filePath = p.join(config.outputDir, fileName);
     final file = File(filePath);
 
-    await file.writeAsString(content);
+    await _writeIfChanged(file, content);
   }
 
   /// Finds all generated .g.dart files
   Future<void> _findGeneratedFiles(List<File> files) async {
-    // Ищем файлы в output директории вместо всей lib
+    // Search files in the output directory instead of the entire lib
     final outputDir = Directory(config.outputDir);
     if (!outputDir.existsSync()) {
       return;
@@ -225,31 +385,42 @@ ${operations.join('\n')}
     }
   }
 
-  /// Extracts operation name from GraphQL document content
-  String? _extractOperationName(String content) {
-    final operations = parseOperations(content);
-    return operations.isNotEmpty ? operations.first.name : null;
-  }
-
-  /// Extracts operation type from GraphQL document content
-  String? _extractOperationType(String content) {
-    final operations = parseOperations(content);
-    return operations.isNotEmpty ? operations.first.type : null;
+  /// Converts a file base name back to a PascalCase operation name,
+  /// handling any configured naming mode (snake_case, kebab-case, camelCase, PascalCase).
+  String _fileBaseNameToOperationName(String baseName) {
+    // Split on underscores or hyphens to handle snake_case and kebab-case
+    final parts = baseName.split(RegExp(r'[_\-]'));
+    if (parts.length > 1) {
+      // snake_case or kebab-case: capitalize each part
+      return parts
+          .where((p) => p.isNotEmpty)
+          .map((p) => p[0].toUpperCase() + p.substring(1))
+          .join('');
+    }
+    // camelCase or PascalCase: just capitalize first letter
+    if (baseName.isNotEmpty) {
+      return baseName[0].toUpperCase() + baseName.substring(1);
+    }
+    return baseName;
   }
 
   /// Generates the output file name based on operation name
   /// Example: GetDrugList -> get_drug_list_graphql.g.dart
   String _generateOutputFileName(String operationName) {
-    final snakeCaseName = _camelToSnakeCase(operationName);
-    return '${snakeCaseName}_graphql.g.dart';
+    // Respect configured file naming mode
+    final base = transformFileBaseName(operationName, config.fileNaming);
+    return '${base}_graphql.g.dart';
   }
 
-  /// Converts camelCase to snake_case
-  /// Example: GetDrugList -> get_drug_list, ContinueVisit -> continue_visit
-  String _camelToSnakeCase(String input) {
-    return input
-        .replaceAllMapped(RegExp(r'(?<!^)(?=[A-Z])'), (match) => '_')
-        .toLowerCase();
+  /// Deterministic write helper: writes file only if content has changed.
+  Future<void> _writeIfChanged(File file, String newContent) async {
+    if (await file.exists()) {
+      final current = await file.readAsString();
+      if (current == newContent) {
+        return;
+      }
+    }
+    await file.writeAsString(newContent);
   }
 
   @override
@@ -269,14 +440,13 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
     throw FileSystemException('Config file not found', configPath);
   }
 
-  final yamlString = configFile.readAsStringSync();
+  final cfg = GraphQLCodegenConfig.fromYaml(configFile.readAsStringSync());
+  // Push to global context for static generators
+  CodegenConfigContext.fileNaming = cfg.fileNaming;
+  CodegenConfigContext.strictNullability = cfg.strictNullability;
+  CodegenConfigContext.emitIndex = cfg.emitIndex;
+  CodegenConfigContext.diagnosticsFormat = cfg.diagnosticsFormat;
+  CodegenConfigContext.scalarMapping = Map.of(cfg.scalarMapping);
 
-  try {
-    final config = GraphQLCodegenConfig.fromYaml(yamlString);
-    return GraphQLCodegenBuilder(config);
-  } catch (e, stackTrace) {
-    print('Error parsing config: $e');
-    print('Stack trace: $stackTrace');
-    rethrow;
-  }
+  return GraphQLCodegenBuilder(cfg);
 }

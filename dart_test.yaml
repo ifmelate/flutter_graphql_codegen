@@ -1,0 +1,3 @@
+tags:
+  compile:
+    timeout: 5m

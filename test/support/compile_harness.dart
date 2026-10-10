@@ -1,0 +1,97 @@
+/// Helpers for verifying that generated code actually compiles.
+///
+/// Creates a throwaway Dart package, writes generated sources into it, runs
+/// json_serializable via build_runner and then `dart analyze`.
+library;
+
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+
+class CompileResult {
+  final bool ok;
+  final List<String> errors;
+  final String log;
+
+  CompileResult(this.ok, this.errors, this.log);
+}
+
+/// Writes [files] (package-relative path -> content) into a fresh package,
+/// runs build_runner and dart analyze and returns analyzer errors.
+///
+/// Each of [runScripts] (package-relative paths) is then executed with
+/// `dart run`; a non-zero exit code is reported as an error.
+Future<CompileResult> compileGenerated(
+  Map<String, String> files, {
+  Directory? workDir,
+  List<String> runScripts = const [],
+}) async {
+  final dir = workDir ?? await Directory.systemTemp.createTemp('fgc_compile_');
+  final log = StringBuffer();
+
+  File(p.join(dir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: fgc_compile_check
+publish_to: none
+environment:
+  sdk: ^3.2.0
+dependencies:
+  graphql: ^5.1.3
+  json_annotation: ^4.8.1
+dev_dependencies:
+  build_runner: ^2.4.6
+  json_serializable: ^6.7.1
+''');
+  File(p.join(dir.path, 'analysis_options.yaml')).writeAsStringSync('');
+
+  for (final entry in files.entries) {
+    final file = File(p.join(dir.path, entry.key));
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync(entry.value);
+  }
+
+  Future<ProcessResult> run(List<String> args) async {
+    final r = await Process.run(Platform.resolvedExecutable, args,
+        workingDirectory: dir.path);
+    log
+      ..writeln('\$ dart ${args.join(' ')} (exit ${r.exitCode})')
+      ..writeln(r.stdout)
+      ..writeln(r.stderr);
+    return r;
+  }
+
+  var r = await run(['pub', 'get', '--offline']);
+  if (r.exitCode != 0) r = await run(['pub', 'get']);
+  if (r.exitCode != 0) {
+    return CompileResult(false, ['pub get failed'], log.toString());
+  }
+
+  r = await run(
+      ['run', 'build_runner', 'build', '--delete-conflicting-outputs']);
+  final buildErrors = <String>[];
+  if (r.exitCode != 0) {
+    buildErrors.add('build_runner failed');
+  }
+
+  r = await run(['analyze', '--no-fatal-warnings', '.']);
+  final errors = [
+    ...buildErrors,
+    ...'${r.stdout}'
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.startsWith('error -')),
+  ];
+
+  if (errors.isEmpty) {
+    for (final script in runScripts) {
+      r = await run(['run', script]);
+      if (r.exitCode != 0) {
+        errors.add('$script failed: ${r.stdout}\n${r.stderr}');
+      }
+    }
+  }
+
+  if (workDir == null && errors.isEmpty) {
+    await dir.delete(recursive: true);
+  }
+  return CompileResult(errors.isEmpty, errors, log.toString());
+}
