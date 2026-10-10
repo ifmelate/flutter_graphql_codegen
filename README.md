@@ -22,20 +22,22 @@ A code generator for Flutter GraphQL applications that generates type-safe Dart 
 
 - 🎯 **Type-safe code generation** from GraphQL schemas and operations
 - 🔧 **Automatic Dart class generation** with proper JSON serialization
-- 🚀 **GraphQL client extensions** for queries, mutations, and subscriptions
-- 🛡️ **Null safety** support with graceful error handling
+- 🚀 **GraphQL client extensions** for queries, mutations, and subscriptions (as `Stream`s)
+- 🧾 **Typed variables** classes for every operation with variables
+- 🛡️ **Null safety** support; GraphQL errors surface as `OperationException`
 - 📦 **Custom scalar support** (DateTime, Decimal, Long, Byte, etc.)
 - 🔄 **Safe type converters** with fallback values
 - 📋 **Support for complex GraphQL features**:
-  - Interfaces and unions
-  - Enums with custom values
+  - Interfaces and unions (resolved via `__typename`, with `Unknown*` fallbacks)
+  - Enums (values that clash with Dart keywords are escaped, e.g. `default_`)
   - Input types and arguments
-  - Fragments and inline fragments
-  - Custom directives
+  - Fragments (also across files) and inline fragments
+  - `@skip` / `@include`, aliases, multiple root fields
+  - Schema extensions (`extend type ...`)
   - Nested and recursive types
-- 🌐 **Multiple schema sources**: local files, HTTP/HTTPS URLs, file URLs
+- 🌐 **Multiple schema sources**: local files, HTTP/HTTPS URLs (SDL or introspection, with auth headers), file URLs
 - 🧪 **Comprehensive test coverage** with robust error handling
- - 🔁 **Deterministic output**: stable sorting for enums/fields, write-only-if-changed, stable index export
+- 🔁 **Deterministic output**: stable sorting for enums/fields, write-only-if-changed, stable index export
 
 ## 🚀 Getting Started
 
@@ -92,6 +94,8 @@ diagnostics_format: plain     # plain | json
 scalar_mapping:               # GraphQL scalar -> Dart type overrides
   # JSON: dynamic
   # Date: DateTime
+schema_headers:               # headers for downloading a remote schema
+  # Authorization: "Bearer ${GRAPHQL_TOKEN}"   # ${VAR} reads an env variable
 ```
 
 #### Schema Source Options
@@ -115,6 +119,12 @@ schema_url: "file:///absolute/path/to/schema.graphql"
 schema_url: "https://api.example.com/graphql"      # GraphQL endpoint
 schema_url: "http://localhost:4000/graphql/sdl"    # Direct SDL endpoint
 ```
+
+For URLs the generator tries, in order: `GET <url>` returning SDL, `GET <url>?sdl`,
+and finally a standard introspection query (`POST`) whose result is converted to SDL.
+Remote schemas are downloaded once per `build_runner` run; restart `watch` to
+pick up remote schema changes. Local schema files inside the package are tracked,
+so editing them triggers regeneration.
 
 #### Alternative Configuration Format
 
@@ -165,25 +175,47 @@ This is because the JSON serialization generator (`json_serializable`) needs the
 
 ```dart
 import 'package:graphql/client.dart';
-import 'lib/graphql/generated/types.dart';
-import 'lib/graphql/generated/index.dart';
+import 'package:your_app/graphql/generated/index.dart';
 
-// Initialize GraphQL client
 final client = GraphQLClient(
   link: HttpLink('https://your-graphql-endpoint.com/graphql'),
   cache: GraphQLCache(),
 );
 
-// Use the generated extension methods
-final result = await client.getUser({'id': 'user-123'});
+// Typed data (variables built with the generated GetUserVariables class)
+final user = await client.getUserData(GetUserVariables(id: 'user-123').toJson());
+print('User: ${user?.name}');
 
-if (result.hasException) {
-  print('Error: ${result.exception}');
-} else {
-  // Or use typed helper to get parsed data directly
-  final user = await client.getUserData({'id': 'user-123'});
-  print('User: ${user?.name} (${user?.email})');
-}
+// Raw QueryResult, if you need it
+final result = await client.getUser({'id': 'user-123'});
+```
+
+### What gets generated
+
+For every named operation (each operation in a file gets its own file):
+
+| Generated | Example for `query GetUser($id: ID!)` |
+|-----------|----------------------------------------|
+| Document constant (with fragments and `__typename`) | `getUserDocument` |
+| Operation name constant | `getUserOperationName` |
+| Variables class (when the operation has variables) | `GetUserVariables(id: '1').toJson()` |
+| Response parser | `User? parseGetUserData(Map<String, dynamic>? data)` |
+| Raw method on `GraphQLClient` | `Future<QueryResult<...>> getUser([variables])` |
+| Typed method on `GraphQLClient` | `Future<User?> getUserData([variables])` |
+
+- **Mutations** use `client.mutate`, **subscriptions** return `Stream`s from `client.subscribe`.
+- An operation selecting **several root fields** returns a `<Operation>Result`
+  class with one property per field (aliases are used as names).
+- The document constant and parser let you use any client feature, e.g. `watchQuery`
+  or a custom `fetchPolicy`:
+
+```dart
+final observable = client.watchQuery(WatchQueryOptions(
+  document: getUserDocument,
+  variables: GetUserVariables(id: '1').toJson(),
+  fetchPolicy: FetchPolicy.cacheAndNetwork,
+));
+observable.stream.map((r) => parseGetUserData(r.data));
 ```
 
 ### Advanced Features
@@ -203,7 +235,7 @@ int count;
 @SafeBoolConverter()
 bool isActive;
 
-@DecimalConverter()
+@SafeDecimalConverter()
 Decimal? price;
 ```
 
@@ -255,48 +287,53 @@ subscription UserUpdated($id: ID!) {
 
 ```dart
 // Query
-final result = await client.getUser({'id': 'user-123'});
-final user = await client.getUserData({'id': 'user-123'});
+final user = await client.getUserData(GetUserVariables(id: 'user-123').toJson());
 
-// Mutation
-final created = await client.createUserData({
-  'input': {
-    'name': 'John Doe',
-    'email': 'john@example.com',
-    'role': 'MODERATOR',
+// Mutation (input types have toJson(); enums are serialized by their schema name)
+final created = await client.createUserData(CreateUserVariables(
+  input: CreateUserInput(name: 'John Doe', email: 'john@example.com',
+      role: UserRole.MODERATOR),
+).toJson());
+
+// Subscription
+client.userUpdatedData(UserUpdatedVariables(id: 'user-123').toJson())
+    .listen((user) => print(user?.name));
+```
+
+#### Interfaces and Unions
+
+Interfaces and unions become abstract classes whose `fromJson` picks the concrete
+class from `__typename` (added to every selection automatically). Unknown types
+fall back to `Unknown<Name>`:
+
+```dart
+for (final item in await client.searchData({'term': 'dart'})) {
+  switch (item) {
+    case User u: print('user ${u.name}');
+    case Post p: print('post ${p.title}');
+    case UnknownSearchResult x: print('new type ${x.typename}');
   }
-});
+}
 ```
 
 ### Error Handling
 
-The generator includes robust error handling:
+The raw methods (`client.getUser(...)`) and typed methods (`client.getUserData(...)`)
+throw `OperationException` when the result has GraphQL or network errors, so the
+original `graphqlErrors` / `linkException` are preserved:
 
 ```dart
-// Safe converters handle malformed data gracefully
-@SafeBoolConverter()
-bool isActive; // Defaults to false if null or invalid
-
-@SafeIntConverter()
-int count; // Defaults to 0 if null or invalid
-
-// Custom error handling
-final result = await client.getUserQuery(
-  variables: GetUserArguments(id: 'invalid-id'),
-);
-
-if (result.hasException) {
-  // Handle GraphQL errors
-  final graphQLErrors = result.exception?.graphqlErrors;
-  final networkError = result.exception?.linkException;
-  
-  print('GraphQL Errors: $graphQLErrors');
-  print('Network Error: $networkError');
-} else {
-  // Safe to access data
-  final user = result.parsedData?.user;
+try {
+  final user = await client.getUserData({'id': 'invalid-id'});
+} on OperationException catch (e) {
+  print('GraphQL errors: ${e.graphqlErrors}');
+  print('Network error: ${e.linkException}');
 }
 ```
+
+Field-level converters stay lenient: `@SafeIntConverter()` / `@SafeBoolConverter()` /
+`@SafeDoubleConverter()` on non-nullable fields fall back to `0` / `false` / `0.0`
+when a value is missing or malformed.
 
 ## ⚙️ Configuration Options
 
@@ -310,6 +347,7 @@ if (result.hasException) {
 | `emit_index` | Emit `index.dart` exporter | `true` | ❌ |
 | `diagnostics_format` | Errors output format | `plain` | ❌ |
 | `scalar_mapping` | GraphQL scalar → Dart type map | `{}` | ❌ |
+| `schema_headers` | HTTP headers for remote schema download (`${ENV}` expanded) | `{}` | ❌ |
 
 > Note: `document_paths` or `documents` is required; the generator will fail if missing.
 
@@ -329,6 +367,9 @@ if (result.hasException) {
 - `SCH404`: Schema file not found
 - `SCH500`: Schema download failed
 - `BLD100`: Operation parse/build error
+- `BLD101`: Operation uses an unknown fragment
+- `BLD102`: Fragment defined twice with different selections
+- `BLD103`: Operation selects a root field that is not in the schema
 - `BLD200`: Index generation error
 
 ## 📚 API Reference
@@ -343,36 +384,20 @@ All GraphQL types are generated as Dart classes with:
 
 ### Generated Extensions
 
-For each operation, the generator creates client extensions:
-- **Queries**: `client.{operationName}Query(variables?)`
-- **Mutations**: `client.{operationName}Mutation(variables?)`
-- **Subscriptions**: `client.{operationName}Subscription(variables?)`
+For each operation `MyOperation`, the generator creates an extension on `GraphQLClient`:
+- **Queries / mutations**: `client.myOperation([variables])` → `Future<QueryResult>` and
+  `client.myOperationData([variables])` → typed `Future`
+- **Subscriptions**: `client.myOperation([variables])` → `Stream<QueryResult>` and
+  `client.myOperationData([variables])` → typed `Stream`
 
-### Type Safety
+### Known Limitations
 
-```dart
-// Generated with full type safety
-class GetUserArguments {
-  final String id;
-  
-  GetUserArguments({required this.id});
-}
-
-class User {
-  final String id;
-  final String? name;
-  final String? email;
-  @SafeBoolConverter()
-  final bool isActive;
-  
-  User({
-    required this.id,
-    this.name,
-    this.email,
-    required this.isActive,
-  });
-}
-```
+- Generated classes mirror **schema types**, not the fields an operation selects.
+  If an operation does not select a non-nullable field of an object type (for
+  example a `String!`), parsing that object throws. Select all non-nullable
+  fields of the object types you fetch, or make them nullable in the schema.
+- Variables classes omit optional variables that are `null`; explicitly sending
+  `null` requires passing a plain map.
 
 ## 🔧 Troubleshooting
 
@@ -419,9 +444,11 @@ dart run build_runner build --delete-conflicting-outputs
 #### Schema Download Issues
 
 For HTTP/HTTPS schema URLs, ensure:
-- The endpoint is accessible
-- Authentication headers are set if required
-- The URL returns valid GraphQL schema (SDL format)
+- The endpoint is accessible (requests time out after 30 seconds)
+- Authentication headers are configured via `schema_headers` if required
+- The endpoint serves SDL or allows introspection
+
+The `SCH500` error lists every attempt (SDL, `?sdl`, introspection) and why it failed.
 
 #### Complex Type Generation Issues
 
@@ -435,8 +462,11 @@ If complex types aren't generating correctly:
 The package includes comprehensive test coverage:
 
 ```bash
-# Run all tests
+# Run all tests (includes a slower test that compiles generated code)
 dart test
+
+# Skip the compile test
+dart test -x compile
 
 # Run with coverage
 dart test --coverage=coverage

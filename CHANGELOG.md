@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Interfaces and unions: generated as abstract classes whose `fromJson`
+  dispatches on `__typename`, with `Unknown<Name>` fallbacks; object types
+  `implements` their interfaces and unions
+- Typed `<Operation>Variables` classes with `toJson()` (enums, dates, custom
+  scalars and input types are serialized; unset optional variables are omitted)
+- Public `<operation>Document` / `<operation>OperationName` constants and
+  `parse<Operation>Data` functions, usable with `watchQuery`, custom fetch
+  policies, etc.
+- Operations with several root fields return a `<Operation>Result` class
+- Fragments defined in other `.graphql` files (matched by `document_paths`)
+- `__typename` is added to every selection set of generated documents
+- Schema extensions (`extend type`, `extend enum`, ...) are merged
+- `schema_headers` config option (with `${ENV_VAR}` expansion) and an
+  introspection fallback (converted to SDL) for remote schemas
+- New error codes `BLD101` (unknown fragment), `BLD102` (conflicting fragment),
+  `BLD103` (unknown root field)
+- Test that compiles generated code (json_serializable + `dart analyze`) and
+  runs it against a fake link
+
+### Fixed
+- Subscriptions now compile: they return `Stream`s via `GraphQLClient.subscribe`
+  (previously `SubscriptionOptions` were passed to `query`)
+- Generated code for schemas with unions no longer fails json_serializable
+- Every operation in a document is generated, not only the first one
+- Aliased root fields are read from the alias key
+- Dart reserved words and clashing names are escaped (`class` -> `class_`,
+  enum value `default` -> `default_`), keeping the GraphQL name on the wire
+- Typed `*Data` methods no longer swallow errors and return `null`;
+  `OperationException` (with `graphqlErrors`) is thrown instead
+- `@skip`/`@include` and other directives are kept when printing operations
+- Files whose path contains `schema.graphql` (e.g. `get_schema.graphql`) are
+  no longer skipped; schema files are detected by their content
+- The schema is loaded and `types.dart` generated once per build instead of
+  once per operation file; local schemas are read through the build system so
+  editing them triggers a rebuild
+- Remote schema downloads have a 30s timeout; failures list every attempt
+- `_dateTimeListToJson` now serializes in UTC like `DateTimeConverter`
+- Builder output uses `log` instead of `print` (which build_runner reported as
+  warnings)
+- Generated files no longer produce analyzer warnings in user projects
+- `dart analyze --fatal-infos` passes again
+
+### Changed
+- Custom scalar wrapper classes keep the raw JSON value (`raw`); `value` is the
+  string form (JSON-encoded for non-string values). The constructor accepts any
+  JSON value
+- `DateTimeConverter.toJson` / `LocalDateConverter.toJson` return `dynamic`
+- Unknown enum values throw `ArgumentError` instead of `Exception`
+- `Decimal`, `Long`, `Byte` and custom scalar classes implement `==`/`hashCode`
+- Mapped scalars (`scalar_mapping`) no longer get a generated wrapper class
+
+### Removed
+- Placeholder `Awesome` class
+
 ## [1.0.1] - 2025-08-31
 
 ### Fixed
