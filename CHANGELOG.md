@@ -5,9 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-10-10
+
+### Breaking changes and migration
+
+- Typed `*Data` methods throw `OperationException` on GraphQL or network
+  errors instead of returning `null`. Wrap calls in `try`/`on
+  OperationException` if you relied on `null`.
+- An operation that selects several root fields now returns an
+  `<Operation>Result` object instead of only the first field.
+- Custom scalar wrapper classes store the received JSON in `raw`; `value` is
+  still a `String`. `MyScalar('text')` keeps working.
+- `DateTimeConverter.toJson` and `LocalDateConverter.toJson` return `dynamic`.
+- Unknown enum values throw `ArgumentError` instead of `Exception`.
+- The placeholder `Awesome` class was removed.
+- Generated object types that implement interfaces or belong to unions now
+  declare `implements ...`.
 
 ### Added
+- Config options `strict_nullability`, `file_naming`, `emit_index`,
+  `diagnostics_format` and `scalar_mapping`
+- Structured error codes (`CFG*`, `SCH*`, `BLD*`) with plain or JSON output
+- Deterministic output: sorted types, fields and enum values, files written
+  only when their content changes
+- Operations are parsed with the `gql` AST parser instead of regular
+  expressions
 - Interfaces and unions: generated as abstract classes whose `fromJson`
   dispatches on `__typename`, with `Unknown<Name>` fallbacks; object types
   `implements` their interfaces and unions
@@ -49,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warnings)
 - Generated files no longer produce analyzer warnings in user projects
 - `dart analyze --fatal-infos` passes again
+- Cross-platform path handling (Windows/macOS/Linux) in the builder and schema
+  downloader, including `file://` URIs and `index.dart` exports
 
 ### Changed
 - Custom scalar wrapper classes keep the raw JSON value (`raw`); `value` is the
@@ -66,17 +90,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - CI stability: make `dart analyze --fatal-infos` pass by removing an unused import in tests
-
-## [1.0.2-rc.1] - 2025-09-16
-
-### Fixed
-- Cross-platform path handling (Windows/macOS/Linux) in builder and schema downloader using `package:path`
-- Proper handling of `file://` URIs via `p.fromUri` and normalized local paths
-- Robust `index.dart` export generation using `p.basename` and POSIX `/` separators
-- Unified schema loading through `SchemaDownloader.downloadSchema`
-
-### Notes
-- This is a prerelease for Windows IDE/build_runner compatibility improvements
 
 ## [1.0.0] - 2025-06-08
 
