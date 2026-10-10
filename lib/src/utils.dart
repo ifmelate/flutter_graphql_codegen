@@ -1,3 +1,5 @@
+import 'parser.dart';
+
 class Operation {
   final String name;
   final String type;
@@ -5,17 +7,14 @@ class Operation {
   Operation(this.name, this.type);
 }
 
+/// Returns the named operations (name + `query`/`mutation`/`subscription`)
+/// declared in [documentContent].
+///
+/// Uses the GraphQL parser, so keywords inside strings, comments or field
+/// names are not mistaken for operations.
 List<Operation> parseOperations(String documentContent) {
-  final operations = <Operation>[];
-  final regex = RegExp(r'(query|mutation|subscription)\s+(\w+)');
-
-  final matches = regex.allMatches(documentContent);
-
-  for (final match in matches) {
-    final type = match.group(1)!;
-    final name = match.group(2)!;
-    operations.add(Operation(name, type));
-  }
-
-  return operations;
+  return [
+    for (final op in GraphQLParser.parseOperations(documentContent))
+      if (op.name != 'Anonymous') Operation(op.name, op.type),
+  ];
 }

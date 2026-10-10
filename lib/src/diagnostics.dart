@@ -14,6 +14,9 @@ class CodegenErrorCodes {
   static const String schemaDownloadFailed = 'SCH500';
 
   static const String buildOperationParse = 'BLD100';
+  static const String buildMissingFragment = 'BLD101';
+  static const String buildDuplicateFragment = 'BLD102';
+  static const String buildUnknownField = 'BLD103';
   static const String buildIndexFailed = 'BLD200';
 }
 
