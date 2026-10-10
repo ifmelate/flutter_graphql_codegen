@@ -4,6 +4,7 @@ import 'package:build_test/build_test.dart';
 import 'package:flutter_graphql_codegen/src/builder.dart';
 import 'package:flutter_graphql_codegen/src/config.dart';
 import 'package:flutter_graphql_codegen/src/config_context.dart';
+import 'package:flutter_graphql_codegen/src/diagnostics.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -37,12 +38,19 @@ void main() {
         ),
       );
 
-  Future<void> run(Map<String, String> assets) => testBuilder(
+  Future<void> run(Map<String, String> assets) async {
+    try {
+      await testBuilder(
         builder(),
         {'a|lib/schema.graphql': _schema, ...assets},
         rootPackage: 'a',
         onLog: (r) => logs.add('${r.level.name}: ${r.message}'),
       );
+    } on CodegenException {
+      // build_test 2.x rethrows builder errors (3.x only logs them); the
+      // builder logs them as SEVERE before throwing either way.
+    }
+  }
 
   String? output(String name) {
     final file = File(p.join(outDir.path, name));
