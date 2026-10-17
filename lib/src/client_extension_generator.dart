@@ -100,6 +100,7 @@ $body''';
     if (variables.isNotEmpty) buffer.writeln(variables);
 
     buffer.writeln(_generateParser(context));
+    buffer.writeln(_generateOptions(context));
     buffer.write(_generateExtension(context));
     return buffer.toString();
   }
@@ -366,7 +367,146 @@ $options
     final result = await $camel(variables);
     return $parse(result.data);
   }
-}
+${isMutation ? '' : _generateCacheHelpers(ctx)}}
+''';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Typed options and cache helpers
+  // ---------------------------------------------------------------------------
+
+  /// Top-level functions building `package:graphql` options whose
+  /// `parserFn` is the generated parser, so `QueryResult.parsedData` (and
+  /// `ObservableQuery` results) are typed.
+  static String _generateOptions(_OperationContext ctx) {
+    final common = [
+      ('graphql.FetchPolicy? fetchPolicy', 'fetchPolicy: fetchPolicy'),
+      ('graphql.ErrorPolicy? errorPolicy', 'errorPolicy: errorPolicy'),
+      (
+        'graphql.CacheRereadPolicy? cacheRereadPolicy',
+        'cacheRereadPolicy: cacheRereadPolicy'
+      ),
+      ('graphql.Context? context', 'context: context'),
+      ('Object? optimisticResult', 'optimisticResult: optimisticResult'),
+    ];
+    const poll = ('Duration? pollInterval', 'pollInterval: pollInterval');
+    final t = ctx.returnType;
+    final buffer = StringBuffer();
+    switch (ctx.operation.type) {
+      case OperationType.query:
+        buffer
+          ..writeln(_optionsFunction(ctx, 'QueryOptions', 'Query',
+              'GraphQLClient.query', [...common, poll]))
+          ..write(_optionsFunction(ctx, 'WatchQueryOptions', 'WatchQuery',
+              'GraphQLClient.watchQuery', [
+            ...common,
+            poll,
+            ('bool fetchResults = false', 'fetchResults: fetchResults'),
+            (
+              'bool carryForwardDataOnException = true',
+              'carryForwardDataOnException: carryForwardDataOnException'
+            ),
+            (
+              'bool? eagerlyFetchResults',
+              'eagerlyFetchResults: eagerlyFetchResults'
+            ),
+          ]));
+      case OperationType.mutation:
+        buffer.write(_optionsFunction(
+            ctx, 'MutationOptions', 'Mutation', 'GraphQLClient.mutate', [
+          ...common,
+          ('graphql.OnMutationUpdate<$t>? update', 'update: update'),
+          (
+            'graphql.OnMutationCompleted? onCompleted',
+            'onCompleted: onCompleted'
+          ),
+          ('graphql.OnError? onError', 'onError: onError'),
+        ]));
+      case OperationType.subscription:
+        buffer.write(_optionsFunction(ctx, 'SubscriptionOptions',
+            'Subscription', 'GraphQLClient.subscribe', common));
+    }
+    return buffer.toString();
+  }
+
+  static String _optionsFunction(
+    _OperationContext ctx,
+    String optionsClass,
+    String suffix,
+    String clientMethod,
+    List<(String, String)> params,
+  ) {
+    final t = ctx.returnType;
+    final vars = '${ctx.pascal}Variables';
+    final buffer = StringBuffer()
+      ..writeln('/// Options for running `${ctx.name}` with '
+          '[graphql.$clientMethod]; the result\'s `parsedData` is typed.')
+      ..write('graphql.$optionsClass<$t> ${ctx.camel}${suffix}Options(');
+    switch (ctx.variablesKind) {
+      case _VariablesKind.required:
+        buffer.write('\n  $vars variables, {\n');
+      case _VariablesKind.optional:
+        buffer.write('{\n  $vars? variables,\n');
+      case _VariablesKind.none:
+        buffer.write('{\n');
+    }
+    for (final (param, _) in params) {
+      buffer.writeln('  $param,');
+    }
+    buffer
+      ..writeln('}) =>')
+      ..writeln('    graphql.$optionsClass<$t>(')
+      ..writeln('    document: ${ctx.camel}Document,')
+      ..writeln('    operationName: ${ctx.camel}OperationName,')
+      ..writeln('    variables: ${ctx.variablesJson},');
+    for (final (_, arg) in params) {
+      buffer.writeln('    $arg,');
+    }
+    buffer
+      ..writeln('    parserFn: parse${ctx.pascal}Data,')
+      ..writeln('  );');
+    return buffer.toString();
+  }
+
+  /// `read*` / `write*` methods for the normalized cache of a query.
+  static String _generateCacheHelpers(_OperationContext ctx) {
+    final vars = '${ctx.pascal}Variables';
+    final t =
+        ctx.returnType.endsWith('?') ? ctx.returnType : '${ctx.returnType}?';
+    final options = '${ctx.camel}QueryOptions';
+    final (readParams, writeParams, args) = switch (ctx.variablesKind) {
+      _VariablesKind.required => (
+          '$vars variables, {bool optimistic = true}',
+          '$vars variables, Map<String, dynamic> data, '
+              '{bool broadcast = true}',
+          'variables',
+        ),
+      _VariablesKind.optional => (
+          '{$vars? variables, bool optimistic = true}',
+          'Map<String, dynamic> data, '
+              '{$vars? variables, bool broadcast = true}',
+          'variables: variables',
+        ),
+      _VariablesKind.none => (
+          '{bool optimistic = true}',
+          'Map<String, dynamic> data, {bool broadcast = true}',
+          '',
+        ),
+    };
+    return '''
+
+  /// Reads `${ctx.name}` from the cache; null when it isn't cached.
+  $t read${ctx.pascal}($readParams) {
+    final Map<String, dynamic>? data =
+        readQuery($options($args).asRequest, optimistic: optimistic);
+    return data == null ? null : parse${ctx.pascal}Data(data);
+  }
+
+  /// Writes raw `data` for `${ctx.name}` into the cache, shaped as the server
+  /// returns it, including `__typename` on every object (also the root).
+  void write${ctx.pascal}($writeParams) {
+    writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
+  }
 ''';
   }
 
@@ -490,6 +630,8 @@ $options
   }
 }
 
+enum _VariablesKind { none, required, optional }
+
 /// A root field selected by an operation.
 class _RootField {
   final String responseKey;
@@ -526,6 +668,22 @@ class _OperationContext {
   }
 
   String get resultClassName => '${pascal}Result';
+
+  /// Whether the operation has variables, and whether any is required.
+  _VariablesKind get variablesKind {
+    final defs = operation.variableDefinitions;
+    if (defs.isEmpty) return _VariablesKind.none;
+    return defs.any((d) => d.type.isNonNull && d.defaultValue?.value == null)
+        ? _VariablesKind.required
+        : _VariablesKind.optional;
+  }
+
+  /// Expression for the variables map in generated options functions.
+  String get variablesJson => switch (variablesKind) {
+        _VariablesKind.required => 'variables.toJson()',
+        _VariablesKind.optional => 'variables?.toJson() ?? const {}',
+        _VariablesKind.none => 'const {}',
+      };
 
   /// Return type of the generated `*Data` method / `parse*Data` function.
   String get returnType {

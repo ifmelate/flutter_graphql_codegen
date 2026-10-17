@@ -234,6 +234,30 @@ Future<void> main() async {
   final changed = await client.userChangedData().first;
   check(changed.id == '1', 'subscription data');
 
+  // Typed options: parsedData is typed for query, mutate and subscribe.
+  final typed =
+      await client.query(searchQueryOptions(const SearchVariables(q: 'a')));
+  check(typed.parsedData!.length == 3, 'typed QueryOptions');
+  final ObservableQuery<CombinedResult> watched = client.watchQuery(
+      combinedWatchQueryOptions(const CombinedVariables(id: '1')));
+  watched.close();
+  final renamedTyped = await client.mutate(
+      renameMutationOptions(const RenameVariables(id: '1', name: 'Bob')));
+  check(renamedTyped.parsedData!.name == 'Bob', 'typed MutationOptions');
+  final changedTyped =
+      await client.subscribe(userChangedSubscriptionOptions()).first;
+  check(changedTyped.parsedData!.id == '1', 'typed SubscriptionOptions');
+
+  // Cache helpers: write raw data, read it back typed.
+  const cacheVars = UsersVariables(first: 1);
+  check(client.readUsers(variables: cacheVars) == null, 'cache miss is null');
+  client.writeUsers({
+    '__typename': 'Query',
+    'users': [user],
+  }, variables: cacheVars);
+  check(client.readUsers(variables: cacheVars)!.single.name == 'Ann',
+      'cache round trip');
+
   // Errors propagate as OperationException instead of being swallowed.
   responses.remove('Combined');
   try {
