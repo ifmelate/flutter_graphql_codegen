@@ -38,7 +38,7 @@ Future<CompileResult> compileGenerated(
 name: fgc_compile_check
 publish_to: none
 environment:
-  sdk: ^3.3.0
+  sdk: ^3.4.0
 dependencies:
   graphql: ^5.1.3
   json_annotation: ^4.8.1

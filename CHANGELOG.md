@@ -33,8 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A build now fails for operations the schema rejects (they used to generate
   code that failed at runtime). Set `validate_documents: false` to keep the old
   behavior while fixing them
-- Requires Dart 3.3 or newer (Flutter 3.19+), because `dart_style` needs it;
-  projects on Dart 3.2 keep resolving 2.1.0
+- Requires Dart 3.4 or newer (Flutter 3.22+), because `dart_style` needs it;
+  projects on older SDKs keep resolving 2.1.0
 - Requires `build` 2.4.0 or newer; adds `dart_style` and `pub_semver`
   dependencies
 

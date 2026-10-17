@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        dart-version: ["3.3.0", "stable"]
+        dart-version: ["3.4.0", "stable"]
 
     steps:
       - name: Checkout repository
