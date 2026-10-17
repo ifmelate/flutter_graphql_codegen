@@ -66,6 +66,8 @@ diagnostics_format: plain
 unknown_enum_fallback: true
 deprecated_annotations: true
 validate_documents: true
+strict_scalars: false
+schema_endpoint: https://example.com/graphql
 ''');
       expect(cfg.warnings, isEmpty);
     });

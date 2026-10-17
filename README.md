@@ -87,6 +87,29 @@ schema_headers:
   Authorization: "Bearer ${GRAPHQL_TOKEN}"
 ```
 
+#### Keeping the schema in the repository
+
+Downloading during every build makes builds depend on the network and on the
+server's current schema. The alternative: keep the schema as a file in the
+project and refresh it with a command when the server changes.
+
+```yaml
+schema_url: lib/graphql/schema.graphql             # the build reads this file
+schema_endpoint: https://api.example.com/graphql   # fetch_schema downloads from here
+schema_headers:
+  Authorization: "Bearer ${GRAPHQL_TOKEN}"
+```
+
+```bash
+dart run flutter_graphql_codegen:fetch_schema
+```
+
+It downloads the schema the same way the builder does (SDL, `?sdl`,
+introspection) with `schema_headers`, and writes it to `schema_url`. Options:
+`--config <file>`, `--endpoint <url>`, `--output <file>` and
+`--header "Name: value"` (repeatable). It exits with 1 when the download fails
+and 64 on wrong usage, so it works in scripts and CI.
+
 ### All options
 
 | Option | Default | Description |
@@ -103,6 +126,8 @@ schema_headers:
 | `unknown_enum_fallback` | `false` | Add a `$unknown` value to every enum instead of throwing on values the server added later (see below) |
 | `deprecated_annotations` | `false` | Turn schema `@deprecated` into Dart `@Deprecated` (see below) |
 | `validate_documents` | `true` | Check operations against the schema before generating (see [Errors](#errors)) |
+| `strict_scalars` | `false` | Fail when a custom scalar has no `scalar_mapping` entry (see [Custom scalars](#custom-scalars)) |
+| `schema_endpoint` | none | Where `fetch_schema` downloads the schema from (see above) |
 
 A misspelled key is ignored with a warning that suggests the closest option.
 
@@ -169,9 +194,15 @@ class GetUserVariables { ... Map<String, dynamic> toJson() }
 
 User? parseGetUserData(Map<String, dynamic>? data);   // response -> model
 
+// package:graphql options with typed variables and parsedData
+QueryOptions<User?> getUserQueryOptions(GetUserVariables variables, {fetchPolicy, ...});
+WatchQueryOptions<User?> getUserWatchQueryOptions(GetUserVariables variables, {...});
+
 extension GetUserExtension on graphql.GraphQLClient {
   Future<QueryResult<Map<String, dynamic>>> getUser([Map<String, dynamic>? variables]);
   Future<User?> getUserData([Map<String, dynamic>? variables]);
+  User? readGetUser(GetUserVariables variables);              // from the cache
+  void writeGetUser(GetUserVariables variables, Map<String, dynamic> data);
 }
 ```
 
@@ -192,18 +223,38 @@ print(dashboard?.me?.id);
 print(dashboard?.notifications?.length);
 ```
 
-The extension methods only cover the common case. For `watchQuery`, a specific
-`fetchPolicy`, or anything else `package:graphql` offers, use the document and
-the parser directly:
+### Options for `query`, `watchQuery`, `mutate` and `subscribe`
+
+The extension methods cover the common case. For `watchQuery`, a fetch or
+error policy, polling, optimistic results or a mutation `update` callback, use
+the generated options functions. They take typed variables, and their
+`parserFn` is the generated parser, so `parsedData` is typed:
 
 ```dart
-final query = client.watchQuery(WatchQueryOptions(
-  document: getUserDocument,
-  variables: GetUserVariables(id: '42').toJson(),
-  fetchPolicy: FetchPolicy.cacheAndNetwork,
+final result = await client.query(getUserQueryOptions(
+  const GetUserVariables(id: '42'),
+  fetchPolicy: FetchPolicy.networkOnly,
 ));
-final users = query.stream.map((result) => parseGetUserData(result.data));
+final User? user = result.parsedData;
+
+final ObservableQuery<User?> query = client.watchQuery(
+  getUserWatchQueryOptions(const GetUserVariables(id: '42'),
+      fetchPolicy: FetchPolicy.cacheAndNetwork),
+);
+query.stream.listen((result) => print(result.parsedData?.name));
 ```
+
+There are `<operation>QueryOptions` and `<operation>WatchQueryOptions` for
+queries, `<operation>MutationOptions` for mutations and
+`<operation>SubscriptionOptions` for subscriptions. Operations without
+variables take no variables argument; operations whose variables are all
+optional take `variables:` as a named argument. Unlike the extension methods,
+`client.query(...)` doesn't throw on errors: check `result.hasException`.
+
+For queries, `read<Operation>` returns the cached result, typed, or null when
+it isn't cached, and `write<Operation>` puts data into the cache. Write data in
+the shape the server returns, with `__typename` on every object including the
+root.
 
 ### Variables
 
@@ -270,9 +321,40 @@ becomes `class Map_`, `scalar Object` becomes `Object_`. `__typename` and
 | `Byte`, `Short` | `Byte` wrapper / `int` |
 | anything else | a generated wrapper class with `raw` (the JSON value as received) and `value` (its string form) |
 
-To use your own type instead, add it to `scalar_mapping`. The generator doesn't
-add imports, so stick to types that are always in scope (`String`, `int`,
-`DateTime`, `Map<String, dynamic>`, ...).
+To use your own type instead, add it to `scalar_mapping`. The short form works
+for types that are always in scope (`String`, `int`, `DateTime`,
+`Map<String, dynamic>`, ...):
+
+```yaml
+scalar_mapping:
+  Date: DateTime
+  JSON: Map<String, dynamic>
+```
+
+For a type from another library, use the long form with `import`. The import
+is added to `types.dart` and to the operation files:
+
+```yaml
+scalar_mapping:
+  Decimal:
+    type: Decimal
+    import: package:decimal/decimal.dart
+  Money:
+    type: Money
+    import: package:my_app/money.dart
+    converter: MoneyConverter
+```
+
+Without `converter`, the type needs `fromJson` and `toJson`, like `Decimal` from
+`package:decimal`. With `converter`, give the name of a `JsonConverter` class
+with a `const` constructor, exported by the same `import`. It's used for fields,
+list elements, variables and results. Give it a non-nullable JSON type
+(`JsonConverter<Money, int>`, not `<Money, Object?>`), so null values are
+handled for you instead of being passed to `fromJson`.
+
+With `strict_scalars: true`, a custom scalar that isn't mapped (and isn't one of
+the built-in ones above) fails the build with `SCH401`, instead of silently
+becoming a wrapper class.
 
 Non-nullable `int`, `double` and `bool` fields have lenient converters: a missing
 or malformed value becomes `0`, `0.0` or `false` instead of throwing.
@@ -299,6 +381,7 @@ Problems found during generation are reported with a code:
 | `CFG001` / `CFG002` | `schema_url` / `document_paths` missing from the config |
 | `CFG999` | Other config problem (bad value, unset env variable in `schema_headers`) |
 | `SCH400` | The schema doesn't parse |
+| `SCH401` | A custom scalar has no `scalar_mapping` entry and `strict_scalars` is on |
 | `SCH404` | Schema file not found |
 | `SCH500` | Remote schema download failed; the message lists every attempt |
 | `BLD100` | An operation file doesn't parse |

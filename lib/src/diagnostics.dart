@@ -11,6 +11,7 @@ class CodegenErrorCodes {
 
   static const String schemaFileNotFound = 'SCH404';
   static const String schemaInvalid = 'SCH400';
+  static const String schemaUnmappedScalar = 'SCH401';
   static const String schemaDownloadFailed = 'SCH500';
 
   static const String buildOperationParse = 'BLD100';

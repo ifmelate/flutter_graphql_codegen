@@ -7,6 +7,10 @@ import 'diagnostics.dart';
 
 class GraphQLCodegenConfig {
   final String schemaUrl;
+
+  /// Endpoint `dart run flutter_graphql_codegen:fetch_schema` downloads the
+  /// schema from (into [schemaUrl]); not used by the builder.
+  final String? schemaEndpoint;
   final String outputDir;
   final List<String> documentPaths;
   final String fileNaming; // snake_case | kebab-case | camelCase | pascalCase
@@ -14,6 +18,17 @@ class GraphQLCodegenConfig {
   final bool emitIndex; // whether to emit index.dart
   final String diagnosticsFormat; // plain | json
   final Map<String, String> scalarMapping; // GraphQL scalar -> Dart type
+
+  /// GraphQL scalar -> library to import for its mapped Dart type.
+  final Map<String, String> scalarImports;
+
+  /// GraphQL scalar -> `JsonConverter` class (with a const constructor) for
+  /// its mapped Dart type.
+  final Map<String, String> scalarConverters;
+
+  /// Fails generation for custom scalars without a `scalar_mapping` entry
+  /// (instead of generating a wrapper class for them).
+  final bool strictScalars;
 
   /// Adds a `$unknown` value to every enum for values the server sends that
   /// were not in the schema at generation time (instead of throwing).
@@ -40,11 +55,13 @@ class GraphQLCodegenConfig {
     'schema_url', 'schema', 'document_paths', 'documents', 'output_dir', //
     'strict_nullability', 'file_naming', 'emit_index', 'scalar_mapping',
     'schema_headers', 'diagnostics_format', 'unknown_enum_fallback',
-    'deprecated_annotations', 'validate_documents',
+    'deprecated_annotations', 'validate_documents', 'strict_scalars',
+    'schema_endpoint',
   };
 
   GraphQLCodegenConfig({
     required this.schemaUrl,
+    this.schemaEndpoint,
     required this.outputDir,
     required this.documentPaths,
     this.fileNaming = 'snake_case',
@@ -55,9 +72,14 @@ class GraphQLCodegenConfig {
     this.deprecatedAnnotations = false,
     this.validateDocuments = true,
     Map<String, String>? scalarMapping,
+    Map<String, String>? scalarImports,
+    Map<String, String>? scalarConverters,
+    this.strictScalars = false,
     Map<String, String>? schemaHeaders,
     this.warnings = const [],
   })  : scalarMapping = scalarMapping ?? const {},
+        scalarImports = scalarImports ?? const {},
+        scalarConverters = scalarConverters ?? const {},
         schemaHeaders = schemaHeaders ?? const {};
 
   factory GraphQLCodegenConfig.fromYaml(String yamlString) {
@@ -118,18 +140,45 @@ class GraphQLCodegenConfig {
           (yamlMap['diagnostics_format'] as String?)?.trim() ?? 'plain';
       final diagnosticsFormat = diagFormat;
 
-      // Scalar mapping
+      // Scalar mapping: `Scalar: DartType` or
+      // `Scalar: {type: DartType, import: uri, converter: ConverterClass}`.
       final scalarMappingMap = <String, String>{};
+      final scalarImports = <String, String>{};
+      final scalarConverters = <String, String>{};
+      final mappingWarnings = <String>[];
       final yamlScalars = yamlMap['scalar_mapping'];
       if (yamlScalars is yaml.YamlMap) {
         for (final entry in yamlScalars.entries) {
           final k = entry.key?.toString();
-          final v = entry.value?.toString();
-          if (k != null && v != null) {
-            scalarMappingMap[k] = v;
+          final v = entry.value;
+          if (k == null || v == null) continue;
+          if (v is! yaml.YamlMap) {
+            scalarMappingMap[k] = v.toString();
+            continue;
+          }
+          final type = v['type']?.toString();
+          if (type == null) {
+            throw CodegenException(
+              CodegenErrorCodes.cfgInvalid,
+              'scalar_mapping entry "$k" needs a type',
+            );
+          }
+          scalarMappingMap[k] = type;
+          if (v['import'] case final Object import) {
+            scalarImports[k] = import.toString();
+          }
+          if (v['converter'] case final Object converter) {
+            scalarConverters[k] = converter.toString();
+          }
+          for (final key in v.keys.map((key) => '$key')) {
+            if (!const {'type', 'import', 'converter'}.contains(key)) {
+              mappingWarnings.add('Unknown key "$key" in scalar_mapping entry '
+                  '"$k" (expected type, import or converter); it is ignored');
+            }
           }
         }
       }
+      final strictScalars = yamlMap['strict_scalars'] as bool? ?? false;
 
       // Headers for remote schema download (e.g. auth)
       final schemaHeaders = <String, String>{};
@@ -151,6 +200,7 @@ class GraphQLCodegenConfig {
 
       return GraphQLCodegenConfig(
         schemaUrl: schemaUrl,
+        schemaEndpoint: yamlMap['schema_endpoint'] as String?,
         outputDir: outputDir,
         documentPaths: documentPaths.map((e) => e as String).toList(),
         fileNaming: fileNaming,
@@ -161,10 +211,14 @@ class GraphQLCodegenConfig {
         deprecatedAnnotations: deprecatedAnnotations,
         validateDocuments: validateDocuments,
         scalarMapping: scalarMappingMap,
+        scalarImports: scalarImports,
+        scalarConverters: scalarConverters,
+        strictScalars: strictScalars,
         schemaHeaders: schemaHeaders,
         warnings: [
           for (final key in yamlMap.keys.map((k) => '$k'))
             if (!knownKeys.contains(key)) _unknownKeyWarning(key),
+          ...mappingWarnings,
         ],
       );
     } catch (e) {
