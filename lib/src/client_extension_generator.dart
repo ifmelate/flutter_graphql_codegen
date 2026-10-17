@@ -10,6 +10,7 @@ import 'document_utils.dart';
 import 'document_validator.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
+import 'type_generator.dart';
 
 /// Utility class for generating client extensions
 class ClientExtensionGenerator {
@@ -29,6 +30,7 @@ class ClientExtensionGenerator {
   }) {
     final operation = _findOperation(
         gql_lang.parseString(operationDocumentContent), operationName);
+    final scalarImports = TypeGenerator.scalarImportDirectives();
     final body = generateClientExtension(
       operationName,
       operationType,
@@ -39,11 +41,11 @@ class ClientExtensionGenerator {
     );
     return '''${CodeGenerationConstants.generatedFileWarning}
 // Operation: $operationName (${operation.type.name})
-${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}
+${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}${scalarImports.isEmpty ? '' : ', unused_import'}
 
 import 'package:graphql/client.dart' as graphql;
 import 'types.dart';
-
+$scalarImports
 $body''';
   }
 
@@ -202,7 +204,13 @@ $body''';
     }
 
     final name = (type as NamedTypeNode).name.value;
-    if (CodegenConfigContext.scalarMapping.containsKey(name)) return v;
+    final mapped = CodegenConfigContext.scalarMapping[name];
+    if (mapped != null) {
+      final converter = CodegenConfigContext.scalarConverters[name];
+      if (converter != null) return 'const $converter().toJson($v)';
+      if (mapped == 'DateTime') return 'const DateTimeConverter().toJson($v)';
+      return _isJsonNative(mapped) ? v : '$v.toJson()';
+    }
     // A schema type named like a built-in scalar (e.g. `type Decimal`) is
     // handled as the type the generator declares for it.
     switch (TypeRegistry.declaresType(name) ? '' : name) {
@@ -539,6 +547,13 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
         NamedTypeNode(name: NameNode(value: name), isNonNull: true));
   }
 
+  /// Dart types a JSON value can be used as directly.
+  static bool _isJsonNative(String type) =>
+      const {'String', 'int', 'double', 'num', 'bool', 'Object', 'dynamic'}
+          .contains(type.replaceAll('?', '')) ||
+      type.startsWith('Map<') ||
+      type.startsWith('List<');
+
   static String _nullable(String type, bool nullable) =>
       nullable && type != 'dynamic' ? '$type?' : type;
 
@@ -564,6 +579,8 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
       String name, String v, Set<String> definedTypes) {
     final mapped = CodegenConfigContext.scalarMapping[name];
     if (mapped != null) {
+      final converter = CodegenConfigContext.scalarConverters[name];
+      if (converter != null) return 'const $converter().fromJson($v)';
       switch (mapped) {
         case 'int':
           return 'const SafeIntConverter().fromJson($v)';
@@ -576,7 +593,9 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
         case 'DateTime':
           return 'const DateTimeConverter().fromJson($v)';
         default:
-          return '$v as $mapped';
+          return _isJsonNative(mapped)
+              ? '$v as $mapped'
+              : '$mapped.fromJson($v)';
       }
     }
     // A schema type named like a built-in scalar (e.g. `type Decimal`) is

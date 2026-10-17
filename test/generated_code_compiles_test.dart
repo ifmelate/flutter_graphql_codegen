@@ -28,11 +28,17 @@ Map<String, String> _generate(
   required bool strict,
   bool unknownEnumFallback = false,
   bool deprecatedAnnotations = false,
+  Map<String, String> scalarMapping = const {},
+  Map<String, String> scalarImports = const {},
+  Map<String, String> scalarConverters = const {},
 }) {
   CodegenConfigContext.reset();
   CodegenConfigContext.strictNullability = strict;
   CodegenConfigContext.unknownEnumFallback = unknownEnumFallback;
   CodegenConfigContext.deprecatedAnnotations = deprecatedAnnotations;
+  CodegenConfigContext.scalarMapping = Map.of(scalarMapping);
+  CodegenConfigContext.scalarImports = Map.of(scalarImports);
+  CodegenConfigContext.scalarConverters = Map.of(scalarConverters);
   try {
     final types = TypeGenerator.generateTypesFile(schema);
     final files = <String, String>{'lib/$dir/types.dart': types};
@@ -377,6 +383,102 @@ void main() {
 }
 ''';
 
+// scalar_mapping with imports: a converter (Money), a type with
+// fromJson/toJson (Cents) and the short form (Date: DateTime).
+const _mappedLibrary = r'''
+import 'package:json_annotation/json_annotation.dart';
+
+class Money {
+  const Money(this.cents);
+  final int cents;
+}
+
+// A non-nullable JSON type lets json_serializable handle nulls.
+class MoneyConverter implements JsonConverter<Money, int> {
+  const MoneyConverter();
+
+  @override
+  Money fromJson(int json) => Money(json);
+
+  @override
+  int toJson(Money object) => object.cents;
+}
+
+class Cents {
+  const Cents(this.value);
+  factory Cents.fromJson(Object? json) => Cents(json as int);
+  final int value;
+  Object? toJson() => value;
+}
+''';
+
+const _mappedSchema = r'''
+scalar Money
+scalar Cents
+scalar Date
+type Item {
+  price: Money!
+  prices: [Money!]!
+  maybe: [Money]
+  cents: Cents!
+  day: Date!
+}
+input ItemInput { price: Money! cents: Cents day: Date }
+type Query { item(day: Date!, price: Money, input: ItemInput): Item! total: Money! }
+''';
+
+const _mappedDocuments = [
+  r'''
+query GetItem($day: Date!, $price: Money, $input: ItemInput) {
+  item(day: $day, price: $price, input: $input) { price prices maybe cents day }
+  total
+}
+''',
+];
+
+const _mappedMain = r'''
+import 'package:fgc_compile_check/mapped/GetItem.g.dart';
+import 'package:fgc_compile_check/mapped/types.dart';
+import 'package:fgc_compile_check/scalars/money.dart';
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: $message');
+}
+
+void main() {
+  final data = parseGetItemData({
+    'item': {
+      '__typename': 'Item',
+      'price': 150,
+      'prices': [1, 2],
+      'maybe': [3, null],
+      'cents': 7,
+      'day': '2024-05-01T00:00:00.000Z',
+    },
+    'total': 999,
+  });
+  check(data.item.price.cents == 150, 'converter on a field');
+  check(data.item.prices[1].cents == 2, 'converter on list elements');
+  check(data.item.maybe![0]!.cents == 3 && data.item.maybe![1] == null,
+      'converter on nullable list elements');
+  check(data.item.cents.value == 7, 'type with fromJson');
+  check(data.item.day.year == 2024, 'short form mapping');
+  check(data.total.cents == 999, 'root field through the converter');
+  check(data.item.toJson()['price'] == 150, 'converter toJson');
+
+  final vars = GetItemVariables(
+    day: DateTime.utc(2024, 5, 1),
+    price: const Money(5),
+    input: ItemInput(price: const Money(6), cents: const Cents(7)),
+  ).toJson();
+  check(vars['day'] == '2024-05-01T00:00:00.000Z', 'mapped DateTime variable');
+  check(vars['price'] == 5, 'converter variable');
+  final input = vars['input'] as Map<String, dynamic>;
+  check(input['price'] == 6 && input['cents'] == 7, 'input with mapped scalars');
+  print('MAPPED OK');
+}
+''';
+
 void main() {
   test('generated code compiles and works', () async {
     final fixtureDir = p.join('test', 'fixtures');
@@ -398,6 +500,22 @@ void main() {
       ..._generate('fallback', _smokeSchema, _smokeDocuments,
           strict: true, unknownEnumFallback: true, deprecatedAnnotations: true),
       ..._generate('collide', _collideSchema, _collideDocuments, strict: true),
+      ..._generate('mapped', _mappedSchema, _mappedDocuments,
+          strict: true,
+          scalarMapping: {
+            'Money': 'Money',
+            'Cents': 'Cents',
+            'Date': 'DateTime'
+          },
+          scalarImports: {
+            'Money': 'package:fgc_compile_check/scalars/money.dart',
+            'Cents': 'package:fgc_compile_check/scalars/money.dart',
+          },
+          scalarConverters: {
+            'Money': 'MoneyConverter'
+          }),
+      'lib/scalars/money.dart': _mappedLibrary,
+      'bin/mapped.dart': _mappedMain,
       'bin/smoke.dart': _smokeMain,
       'bin/fallback.dart': _fallbackMain,
       'bin/collide.dart': _collideMain,
@@ -405,7 +523,12 @@ void main() {
 
     final result = await compileGenerated(
       files,
-      runScripts: ['bin/smoke.dart', 'bin/fallback.dart', 'bin/collide.dart'],
+      runScripts: [
+        'bin/smoke.dart',
+        'bin/fallback.dart',
+        'bin/collide.dart',
+        'bin/mapped.dart',
+      ],
       // json_serializable's output uses deprecated members when they are
       // annotated; that trade-off of deprecated_annotations is documented.
       mustBeClean: (path) =>

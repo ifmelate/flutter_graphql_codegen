@@ -5,6 +5,7 @@ import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 import 'code_utils.dart';
 import 'config_context.dart';
+import 'diagnostics.dart';
 import 'document_utils.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
@@ -38,6 +39,7 @@ class TypeGenerator {
     final schemaDoc =
         DocumentUtils.mergeSchemaExtensions(gql_lang.parseString(schema));
     SchemaAnalyzer.extractCustomTypesAndEnums(schemaDoc);
+    _checkStrictScalars();
     final needsConvert = _wrappedScalars(TypeRegistry.customScalars).isNotEmpty;
     final scalarConverters =
         _generateScalarConverters(TypeRegistry.customScalars);
@@ -46,10 +48,10 @@ class TypeGenerator {
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc, schema);
 
     return '''${CodeGenerationConstants.generatedFileWarning}
-${CodeGenerationConstants.ignoreForFile}, unused_element, deprecated_member_use_from_same_package
+${CodeGenerationConstants.ignoreForFile}, unused_element, unused_import, deprecated_member_use_from_same_package
 
 ${needsConvert ? "import 'dart:convert';\n\n" : ''}import 'package:json_annotation/json_annotation.dart';
-
+${scalarImportDirectives()}
 part 'types.g.dart';
 
 class Decimal {
@@ -295,6 +297,28 @@ ${_generatePossibleTypes()}
 // Helper functions for list conversions
 ${_generateListConverterHelpers(TypeRegistry.customScalars)}
 ''';
+  }
+
+  /// `import` lines for the libraries of mapped scalar types.
+  static String scalarImportDirectives() {
+    final uris = CodegenConfigContext.scalarImports.values.toSet().toList()
+      ..sort();
+    return uris.map((uri) => "import '$uri';\n").join();
+  }
+
+  /// With `strict_scalars`, custom scalars must have a `scalar_mapping`.
+  static void _checkStrictScalars() {
+    if (!CodegenConfigContext.strictScalars) return;
+    final unmapped = TypeRegistry.customScalars
+        .where(TypeRegistry.isWrappedScalar)
+        .toList()
+      ..sort();
+    if (unmapped.isEmpty) return;
+    throw CodegenException(
+      CodegenErrorCodes.schemaUnmappedScalar,
+      'Custom scalars without a scalar_mapping entry (strict_scalars is on): '
+      '${unmapped.join(', ')}',
+    );
   }
 
   /// The concrete object types of every interface and union, in the shape
@@ -781,6 +805,10 @@ class $unknownName implements $name {
     final isNullable = fieldType.endsWith('?');
     // Registry lookups use the GraphQL name; Dart names may be escaped.
     final graphqlBase = getOriginalGraphQLType(type);
+    final mappedConverter =
+        CodegenConfigContext.scalarMapping.containsKey(graphqlBase)
+            ? CodegenConfigContext.scalarConverters[graphqlBase]
+            : null;
 
     // Add @JsonKey annotation for field name preservation so json_serializable
     // never renames GraphQL fields (and escaped Dart names map back).
@@ -797,6 +825,14 @@ class $unknownName implements $name {
       final innerType = fieldType.substring(
           5, fieldType.length - (fieldType.endsWith('>?') ? 2 : 1));
       final cleanInnerType = innerType.replaceAll('?', '');
+
+      // json_serializable applies a field's converter to list elements.
+      if (mappedConverter != null) {
+        return [
+          '  @JsonKey(${nameArg}defaultValue: const <$innerType>[])',
+          '  @$mappedConverter()',
+        ];
+      }
 
       if (TypeRegistry.isWrappedScalar(graphqlBase)) {
         // For lists of custom scalars, use JsonKey with converter
@@ -839,6 +875,7 @@ class $unknownName implements $name {
       ];
     }
 
+    if (mappedConverter != null) return withName('  @$mappedConverter()');
     if (baseType == 'DateTime') {
       // Distinguish between DateTime and LocalDate
       return withName(getOriginalGraphQLType(type) == 'LocalDate'
