@@ -63,6 +63,7 @@ class SchemaAnalyzer {
   }
 
   /// Extracts custom scalars from the schema document
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static Set<String> extractCustomScalars(DocumentNode schemaDoc) {
     final customScalars = <String>{};
     for (final definition in schemaDoc.definitions) {
@@ -110,6 +111,7 @@ class SchemaAnalyzer {
   }
 
   /// Gets the schema type string from a TypeNode
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static String getSchemaType(TypeNode type) {
     if (type is NamedTypeNode) {
       return '${type.name.value}?';
@@ -120,6 +122,7 @@ class SchemaAnalyzer {
   }
 
   /// Maps schema type to Dart type
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static String mapSchemaTypeToDartType(
       String schemaType, Set<String> definedTypes) {
     final isNullable = schemaType.endsWith('?');
@@ -163,6 +166,7 @@ class SchemaAnalyzer {
   }
 
   /// Checks if a type is a scalar type
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static bool isScalarType(String typeName) {
     final scalarTypes = [
       'Int',
@@ -180,6 +184,7 @@ class SchemaAnalyzer {
   }
 
   /// Maps GraphQL type to Dart type for basic types
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static String mapGraphQLTypeToDartType(String graphqlType) {
     switch (graphqlType) {
       case 'Int':

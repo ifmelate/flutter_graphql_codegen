@@ -25,6 +25,48 @@ scalar_mapping:
       expect(cfg.emitIndex, isFalse);
       expect(cfg.diagnosticsFormat, 'json');
       expect(cfg.scalarMapping['Date'], 'DateTime');
+      expect(cfg.deprecatedAnnotations, isFalse);
+      expect(
+        GraphQLCodegenConfig.fromYaml('${yaml}deprecated_annotations: true\n')
+            .deprecatedAnnotations,
+        isTrue,
+      );
+    });
+
+    test('warns about unknown keys and suggests the closest option', () {
+      final cfg = GraphQLCodegenConfig.fromYaml('''
+schema_url: schema.graphql
+document_paths: [a.graphql]
+strict_nulability: true
+something_else: 1
+''');
+      expect(cfg.strictNullability, isFalse);
+      expect(cfg.warnings, hasLength(2));
+      expect(
+          cfg.warnings,
+          contains(allOf(contains('strict_nulability'),
+              contains('did you mean "strict_nullability"'))));
+      expect(
+          cfg.warnings,
+          contains(allOf(
+              contains('something_else'), isNot(contains('did you mean')))));
+    });
+
+    test('accepts every documented key without warnings', () {
+      final cfg = GraphQLCodegenConfig.fromYaml('''
+schema: schema.graphql
+documents: [a.graphql]
+output_dir: out
+strict_nullability: true
+file_naming: snake_case
+emit_index: true
+scalar_mapping: {}
+schema_headers: {}
+diagnostics_format: plain
+unknown_enum_fallback: true
+deprecated_annotations: true
+''');
+      expect(cfg.warnings, isEmpty);
     });
 
     test('parses schema_headers and expands environment variables', () {

@@ -21,6 +21,7 @@ class GraphQLCodeGenerator {
   /// Generates code for a GraphQL operation.
   ///
   /// Same as [generateOperationFile].
+  @Deprecated('Use generateOperationFile; will be removed in 3.0.')
   static String generateCode(
     String schema,
     String documentContent,

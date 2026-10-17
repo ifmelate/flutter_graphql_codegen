@@ -7,6 +7,8 @@ class CodegenConfigContext {
   static bool emitIndex = true;
   static String diagnosticsFormat = 'plain';
   static Map<String, String> scalarMapping = <String, String>{};
+  static bool unknownEnumFallback = false;
+  static bool deprecatedAnnotations = false;
 
   /// Resets all fields to defaults. Useful for tests and watch-mode rebuilds.
   static void reset() {
@@ -15,5 +17,7 @@ class CodegenConfigContext {
     emitIndex = true;
     diagnosticsFormat = 'plain';
     scalarMapping = <String, String>{};
+    unknownEnumFallback = false;
+    deprecatedAnnotations = false;
   }
 }

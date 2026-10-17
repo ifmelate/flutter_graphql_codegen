@@ -14,6 +14,9 @@ import 'schema_analyzer.dart';
 class ClientExtensionGenerator {
   /// Generates a complete operation file (header, imports and the code from
   /// [generateClientExtension]).
+  ///
+  /// [sourcePath] is recorded in the header so the builder can tell which
+  /// document a file was generated from.
   static String generateOperationFile(
     String operationName,
     String operationType,
@@ -21,6 +24,7 @@ class ClientExtensionGenerator {
     DocumentNode schemaDoc,
     Set<String> definedTypes, {
     Map<String, FragmentDefinitionNode> fragments = const {},
+    String? sourcePath,
   }) {
     final operation = _findOperation(
         gql_lang.parseString(operationDocumentContent), operationName);
@@ -34,7 +38,7 @@ class ClientExtensionGenerator {
     );
     return '''${CodeGenerationConstants.generatedFileWarning}
 // Operation: $operationName (${operation.type.name})
-${CodeGenerationConstants.ignoreForFile}
+${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}
 
 import 'package:graphql/client.dart' as graphql;
 import 'types.dart';

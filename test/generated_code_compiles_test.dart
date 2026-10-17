@@ -26,9 +26,13 @@ Map<String, String> _generate(
   String schema,
   List<String> documents, {
   required bool strict,
+  bool unknownEnumFallback = false,
+  bool deprecatedAnnotations = false,
 }) {
   CodegenConfigContext.reset();
   CodegenConfigContext.strictNullability = strict;
+  CodegenConfigContext.unknownEnumFallback = unknownEnumFallback;
+  CodegenConfigContext.deprecatedAnnotations = deprecatedAnnotations;
   try {
     final types = TypeGenerator.generateTypesFile(schema);
     final files = <String, String>{'lib/$dir/types.dart': types};
@@ -59,10 +63,16 @@ scalar DateTime
 
 interface Node { id: ID! }
 
+"""
+A person.
+"""
 type User implements Node {
+  "Stable id."
   id: ID!
   name: String!
+  nick: String @deprecated(reason: "Use 'name'")
   role: Role!
+  roles: [Role!]!
   meta: JSON
   class: String
 }
@@ -71,7 +81,7 @@ type Post implements Node { id: ID! title: String! }
 
 union SearchResult = User | Post
 
-enum Role { ADMIN default }
+enum Role { ADMIN "Old." default @deprecated }
 
 input UserFilter { role: Role, since: DateTime, tags: [String!] }
 
@@ -93,7 +103,7 @@ const _smokeDocuments = [
   r'''
 query Search($q: String!) {
   search(q: $q) {
-    ... on User { id name role meta class }
+    ... on User { id name nick role roles meta class }
     ... on Post { id title }
   }
 }
@@ -151,7 +161,7 @@ const user = {
 final responses = <String, Map<String, dynamic>>{
   'Search': {
     'search': [
-      {...user, 'meta': {'a': 1}, 'class': 'x'},
+      {...user, 'nick': 'A', 'roles': ['ADMIN', 'default'], 'meta': {'a': 1}, 'class': 'x'},
       {'__typename': 'Post', 'id': '2', 'title': 'Hello'},
       {'__typename': 'Ad', 'id': '3'},
     ],
@@ -188,6 +198,9 @@ Future<void> main() async {
   final first = results[0] as User;
   check(first.role == Role.default_, 'escaped enum value');
   check(first.class_ == 'x', 'escaped field name');
+  check(first.nick == 'A', 'deprecated field still parsed');
+  check(first.roles.length == 2 && first.roles[1] == Role.default_,
+      'escaped enum value in a list');
   check(first.meta!.raw is Map, 'JSON scalar keeps raw map');
   check((results[1] as Post).title == 'Hello', 'post member');
   check((results[2] as UnknownSearchResult).typename == 'Ad', 'fallback');
@@ -231,6 +244,37 @@ Future<void> main() async {
 }
 ''';
 
+const _fallbackMain = r'''
+import 'package:fgc_compile_check/fallback/types.dart';
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: $message');
+}
+
+void main() {
+  final user = User.fromJson({
+    'id': '1',
+    'name': 'Ann',
+    'role': 'OWNER',
+    'roles': ['ADMIN', 'OWNER', 'default'],
+  });
+  check(user.role == Role.$unknown, 'unknown enum value');
+  check(user.roles[0] == Role.ADMIN, 'known value in list');
+  check(user.roles[1] == Role.$unknown, 'unknown value in list');
+  // ignore: deprecated_member_use_from_same_package
+  check(user.roles[2] == Role.default_, 'escaped value in list');
+  check(UserFilter(role: Role.ADMIN).toJson()['role'] == 'ADMIN',
+      'known value serialized');
+  try {
+    UserFilter(role: Role.$unknown).toJson();
+    throw StateError(r'Check failed: $unknown must not be serialized');
+  } on ArgumentError {
+    // expected
+  }
+  print('FALLBACK OK');
+}
+''';
+
 void main() {
   test('generated code compiles and works', () async {
     final fixtureDir = p.join('test', 'fixtures');
@@ -249,11 +293,20 @@ void main() {
       ..._generate('legacy', schema, documents, strict: false),
       ..._generate('strict', schema, documents, strict: true),
       ..._generate('smoke', _smokeSchema, _smokeDocuments, strict: true),
+      ..._generate('fallback', _smokeSchema, _smokeDocuments,
+          strict: true, unknownEnumFallback: true, deprecatedAnnotations: true),
       'bin/smoke.dart': _smokeMain,
+      'bin/fallback.dart': _fallbackMain,
     };
 
-    final result =
-        await compileGenerated(files, runScripts: ['bin/smoke.dart']);
+    final result = await compileGenerated(
+      files,
+      runScripts: ['bin/smoke.dart', 'bin/fallback.dart'],
+      // json_serializable's output uses deprecated members when they are
+      // annotated; that trade-off of deprecated_annotations is documented.
+      mustBeClean: (path) =>
+          path.startsWith('lib/') && path != 'lib/fallback/types.g.dart',
+    );
     expect(result.errors, isEmpty, reason: result.log);
   });
 }

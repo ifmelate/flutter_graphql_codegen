@@ -15,9 +15,29 @@ class GraphQLCodegenConfig {
   final String diagnosticsFormat; // plain | json
   final Map<String, String> scalarMapping; // GraphQL scalar -> Dart type
 
+  /// Adds a `$unknown` value to every enum for values the server sends that
+  /// were not in the schema at generation time (instead of throwing).
+  final bool unknownEnumFallback;
+
+  /// Emits `@Deprecated` for schema `@deprecated` fields and enum values
+  /// (otherwise the deprecation is only mentioned in the doc comment).
+  final bool deprecatedAnnotations;
+
   /// HTTP headers sent when downloading a remote schema. Values may reference
   /// environment variables as `${NAME}`.
   final Map<String, String> schemaHeaders;
+
+  /// Problems in the configuration that do not stop generation (e.g. unknown
+  /// keys); the builder logs them.
+  final List<String> warnings;
+
+  /// Keys understood in `graphql_codegen.yaml`.
+  static const Set<String> knownKeys = {
+    'schema_url', 'schema', 'document_paths', 'documents', 'output_dir', //
+    'strict_nullability', 'file_naming', 'emit_index', 'scalar_mapping',
+    'schema_headers', 'diagnostics_format', 'unknown_enum_fallback',
+    'deprecated_annotations',
+  };
 
   GraphQLCodegenConfig({
     required this.schemaUrl,
@@ -27,8 +47,11 @@ class GraphQLCodegenConfig {
     this.strictNullability = false,
     this.emitIndex = true,
     this.diagnosticsFormat = 'plain',
+    this.unknownEnumFallback = false,
+    this.deprecatedAnnotations = false,
     Map<String, String>? scalarMapping,
     Map<String, String>? schemaHeaders,
+    this.warnings = const [],
   })  : scalarMapping = scalarMapping ?? const {},
         schemaHeaders = schemaHeaders ?? const {};
 
@@ -81,6 +104,10 @@ class GraphQLCodegenConfig {
       }
       final strictNullability = yamlMap['strict_nullability'] as bool? ?? false;
       final emitIndex = yamlMap['emit_index'] as bool? ?? true;
+      final unknownEnumFallback =
+          yamlMap['unknown_enum_fallback'] as bool? ?? false;
+      final deprecatedAnnotations =
+          yamlMap['deprecated_annotations'] as bool? ?? false;
       diagFormat =
           (yamlMap['diagnostics_format'] as String?)?.trim() ?? 'plain';
       final diagnosticsFormat = diagFormat;
@@ -124,8 +151,14 @@ class GraphQLCodegenConfig {
         strictNullability: strictNullability,
         emitIndex: emitIndex,
         diagnosticsFormat: diagnosticsFormat,
+        unknownEnumFallback: unknownEnumFallback,
+        deprecatedAnnotations: deprecatedAnnotations,
         scalarMapping: scalarMappingMap,
         schemaHeaders: schemaHeaders,
+        warnings: [
+          for (final key in yamlMap.keys.map((k) => '$k'))
+            if (!knownKeys.contains(key)) _unknownKeyWarning(key),
+        ],
       );
     } catch (e) {
       if (e is CodegenException) {
@@ -137,6 +170,37 @@ class GraphQLCodegenConfig {
       throw CodegenException(CodegenErrorCodes.cfgInvalid, e.toString(),
           cause: e);
     }
+  }
+
+  static String _unknownKeyWarning(String key) {
+    String? closest;
+    var best = 4; // suggest only near misses
+    for (final known in knownKeys) {
+      final distance = _editDistance(key, known);
+      if (distance < best) {
+        best = distance;
+        closest = known;
+      }
+    }
+    return 'Unknown option "$key" in graphql_codegen.yaml'
+        '${closest == null ? '' : ' (did you mean "$closest"?)'}; it is ignored';
+  }
+
+  static int _editDistance(String a, String b) {
+    var previous = List<int>.generate(b.length + 1, (i) => i);
+    for (var i = 1; i <= a.length; i++) {
+      final current = [i, ...List<int>.filled(b.length, 0)];
+      for (var j = 1; j <= b.length; j++) {
+        final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+        current[j] = [
+          previous[j] + 1,
+          current[j - 1] + 1,
+          previous[j - 1] + cost,
+        ].reduce((x, y) => x < y ? x : y);
+      }
+      previous = current;
+    }
+    return previous[b.length];
   }
 
   /// Replaces `${NAME}` with the value of environment variable `NAME`.

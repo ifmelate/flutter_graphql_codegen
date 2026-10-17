@@ -7,6 +7,7 @@ import 'schema_analyzer.dart';
 /// Utility class for analyzing GraphQL operations
 class OperationAnalyzer {
   /// Gets the return type for a GraphQL operation
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static String getOperationReturnType(
     DocumentNode operationDoc,
     DocumentNode schemaDoc,
@@ -42,6 +43,7 @@ class OperationAnalyzer {
   }
 
   /// Gets the field name from the first selection in an operation
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static String getOperationFieldName(DocumentNode operationDoc) {
     for (final definition in operationDoc.definitions) {
       if (definition is OperationDefinitionNode) {
@@ -57,11 +59,13 @@ class OperationAnalyzer {
   }
 
   /// Checks if a field has a @skip directive
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static bool hasSkipDirective(FieldNode field) {
     return field.directives.any((directive) => directive.name.value == 'skip');
   }
 
   /// Analyzes operation and finds fields with @skip directives
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static Set<String> getSkippableFields(DocumentNode operationDoc) {
     final skippableFields = <String>{};
 

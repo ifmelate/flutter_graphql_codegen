@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Schema descriptions become doc comments on generated classes, fields, enums
+  and enum values; `@deprecated` is mentioned there as `Deprecated: <reason>`
+- `deprecated_annotations` option: emit Dart `@Deprecated` for schema
+  `@deprecated` fields and enum values
+- `unknown_enum_fallback` option: enums get a `$unknown` value that unknown
+  server values parse to (including in lists) instead of throwing
+- Error code `BLD104` for duplicate operation names, in one document or across
+  documents, and for names that map to the same output file; generated
+  operation files record their source document in a `// Source:` line
+- Unknown keys in `graphql_codegen.yaml` are reported as warnings, with a
+  suggestion for likely typos
+
+### Fixed
+- Lists of enums with escaped values (e.g. `[Role!]` containing `default`)
+  failed to parse: `json_serializable` didn't know the GraphQL names.
+  Escaped values now carry `@JsonValue`
+- The usage hint in `index.dart` showed an invalid `package:your_app/lib/...`
+  import and a made-up operation; it now shows the real `package:` URI
+
+### Deprecated
+- Public helpers the generator no longer uses, to be removed in 3.0:
+  `TypeGenerator.generateClassForType`, `generateTypeDefinitions` and
+  `getDartTypeFromOriginal`; `OperationAnalyzer.getOperationReturnType`,
+  `getOperationFieldName`, `hasSkipDirective` and `getSkippableFields`;
+  `SchemaAnalyzer.extractCustomScalars`, `getSchemaType`,
+  `mapSchemaTypeToDartType`, `isScalarType` and `mapGraphQLTypeToDartType`;
+  `GraphQLCodeGenerator.generateCode` (use `generateOperationFile`)
+
 ## [2.0.0] - 2026-10-10
 
 ### Breaking changes and migration
