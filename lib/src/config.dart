@@ -7,6 +7,10 @@ import 'diagnostics.dart';
 
 class GraphQLCodegenConfig {
   final String schemaUrl;
+
+  /// Endpoint `dart run flutter_graphql_codegen:fetch_schema` downloads the
+  /// schema from (into [schemaUrl]); not used by the builder.
+  final String? schemaEndpoint;
   final String outputDir;
   final List<String> documentPaths;
   final String fileNaming; // snake_case | kebab-case | camelCase | pascalCase
@@ -52,10 +56,12 @@ class GraphQLCodegenConfig {
     'strict_nullability', 'file_naming', 'emit_index', 'scalar_mapping',
     'schema_headers', 'diagnostics_format', 'unknown_enum_fallback',
     'deprecated_annotations', 'validate_documents', 'strict_scalars',
+    'schema_endpoint',
   };
 
   GraphQLCodegenConfig({
     required this.schemaUrl,
+    this.schemaEndpoint,
     required this.outputDir,
     required this.documentPaths,
     this.fileNaming = 'snake_case',
@@ -194,6 +200,7 @@ class GraphQLCodegenConfig {
 
       return GraphQLCodegenConfig(
         schemaUrl: schemaUrl,
+        schemaEndpoint: yamlMap['schema_endpoint'] as String?,
         outputDir: outputDir,
         documentPaths: documentPaths.map((e) => e as String).toList(),
         fileNaming: fileNaming,
