@@ -100,11 +100,38 @@ schema_headers:
 | `scalar_mapping` | `{}` | Map a custom scalar to an existing Dart type, e.g. `Date: DateTime` |
 | `schema_headers` | `{}` | HTTP headers for downloading a remote schema |
 | `diagnostics_format` | `plain` | `plain` or `json` error output |
+| `unknown_enum_fallback` | `false` | Add a `$unknown` value to every enum instead of throwing on values the server added later (see below) |
+| `deprecated_annotations` | `false` | Turn schema `@deprecated` into Dart `@Deprecated` (see below) |
+
+A misspelled key is ignored with a warning that suggests the closest option.
 
 About `strict_nullability`: with the default `false`, list fields are always
 nullable, and the typed `*Data` methods return nullable values at every level.
 Turn it on for new projects. It's off by default only so existing code keeps
 compiling.
+
+About `unknown_enum_fallback`: by default an enum value the generator doesn't
+know (the server added it after you generated the code) throws while parsing.
+That is risky for mobile apps, where old versions stay installed for a long
+time. With the option on, every enum gets an extra `$unknown` value, and unknown
+values parse to it, also inside lists. Sending `$unknown` back to the server
+throws `ArgumentError`. It's off by default because the extra value makes your
+existing exhaustive `switch` statements over enums incomplete.
+
+About `deprecated_annotations`: descriptions from the schema always become doc
+comments, and a `@deprecated` field or enum value gets a `Deprecated: <reason>`
+line there. With the option on it also gets a real `@Deprecated` annotation, so
+the IDE strikes it out. The catch: `types.g.dart` (written by
+`json_serializable`) uses those members too, so `dart analyze`/`flutter analyze`
+report `deprecated_member_use_from_same_package` there. Exclude generated files
+from analysis if you turn it on:
+
+```yaml
+# analysis_options.yaml
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+```
 
 ## Running the generator
 
@@ -256,6 +283,7 @@ Problems found during generation are reported with a code:
 | `BLD101` | An operation uses a fragment that isn't defined anywhere |
 | `BLD102` | Two fragments share a name but differ |
 | `BLD103` | An operation selects a root field the schema doesn't have |
+| `BLD104` | Two operations have the same name (or names that map to the same file) |
 | `BLD200` | Writing `index.dart` failed |
 
 ## Known limitations
