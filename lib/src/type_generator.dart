@@ -4,9 +4,32 @@ library;
 import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 import 'code_utils.dart';
+import 'config_context.dart';
 import 'document_utils.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
+
+/// A field of a generated JSON class.
+typedef _Field = ({
+  String name,
+  TypeNode type,
+  StringValueNode? description,
+  List<DirectiveNode> directives,
+});
+
+_Field _fieldOf(FieldDefinitionNode f) => (
+      name: f.name.value,
+      type: f.type,
+      description: f.description,
+      directives: f.directives,
+    );
+
+_Field _inputFieldOf(InputValueDefinitionNode f) => (
+      name: f.name.value,
+      type: f.type,
+      description: f.description,
+      directives: f.directives,
+    );
 
 /// Utility class for generating types, enums, and converters
 class TypeGenerator {
@@ -23,7 +46,7 @@ class TypeGenerator {
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc, schema);
 
     return '''${CodeGenerationConstants.generatedFileWarning}
-${CodeGenerationConstants.ignoreForFile}, unused_element
+${CodeGenerationConstants.ignoreForFile}, unused_element, deprecated_member_use_from_same_package
 
 ${needsConvert ? "import 'dart:convert';\n\n" : ''}import 'package:json_annotation/json_annotation.dart';
 
@@ -329,10 +352,26 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
     for (final definition in _sortedDefinitions(schemaDoc)) {
       if (definition is EnumTypeDefinitionNode) {
         final enumName = definition.name.value;
+        buffer.write(_docComment(definition.description));
         buffer.writeln('enum $enumName {');
         // Sort enum values for determinism
         for (final value in _sortedEnumValues(definition)) {
-          buffer.writeln('  ${dartEnumValueName(value.name.value)},');
+          final graphqlName = value.name.value;
+          final dartName = dartEnumValueName(graphqlName);
+          buffer.write(_docComment(value.description,
+              directives: value.directives, indent: '  '));
+          buffer.write(_deprecation(value.directives, indent: '  '));
+          // json_serializable decodes enum lists without our converter; the
+          // JsonValue keeps escaped values mapped to their GraphQL names.
+          if (dartName != graphqlName) {
+            buffer.writeln("  @JsonValue('$graphqlName')");
+          }
+          buffer.writeln('  $dartName,');
+        }
+        if (CodegenConfigContext.unknownEnumFallback) {
+          buffer.writeln('  /// A value added to the schema after this code '
+              'was generated.');
+          buffer.writeln('  \$unknown,');
         }
         buffer.writeln('}');
         buffer.writeln();
@@ -361,20 +400,27 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
           buffer.writeln(
               "      case '${value.name.value}': return $enumName.${dartEnumValueName(value.name.value)};");
         }
-        buffer.writeln(
-            "      default: throw ArgumentError.value(json, 'json', 'Unknown $enumName value');");
+        final fallback = CodegenConfigContext.unknownEnumFallback;
+        buffer.writeln(fallback
+            ? '      default: return $enumName.\$unknown;'
+            : "      default: throw ArgumentError.value(json, 'json', 'Unknown $enumName value');");
         buffer.writeln('    }');
         buffer.writeln('  }');
         buffer.writeln();
         buffer.writeln('  @override');
         final needsMapping =
             values.any((v) => dartEnumValueName(v.name.value) != v.name.value);
-        if (needsMapping) {
+        if (needsMapping || fallback) {
           buffer.writeln('  String toJson($enumName object) {');
           buffer.writeln('    switch (object) {');
           for (final value in values) {
             buffer.writeln(
                 "      case $enumName.${dartEnumValueName(value.name.value)}: return '${value.name.value}';");
+          }
+          if (fallback) {
+            buffer
+                .writeln('      case $enumName.\$unknown: throw ArgumentError('
+                    "'$enumName.\\\$unknown cannot be sent to the server');");
           }
           buffer.writeln('    }');
           buffer.writeln('  }');
@@ -456,7 +502,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
     final typeName = typeNode.name.value;
     return _generateJsonClass(
       className: typeName,
-      fields: [for (final f in typeNode.fields) (f.name.value, f.type)],
+      description: typeNode.description,
+      fields: typeNode.fields.map(_fieldOf).toList(),
       supertypes: TypeRegistry.supertypes(typeName),
       overriddenFields: _inheritedFieldNames(typeName, interfaces),
     );
@@ -468,7 +515,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
       [String schema = '']) {
     return _generateJsonClass(
       className: inputNode.name.value,
-      fields: [for (final f in inputNode.fields) (f.name.value, f.type)],
+      description: inputNode.description,
+      fields: inputNode.fields.map(_inputFieldOf).toList(),
     );
   }
 
@@ -486,13 +534,17 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
       ..sort((a, b) => a.name.value.compareTo(b.name.value));
 
     final buffer = StringBuffer();
-    buffer.writeln('/// GraphQL interface `$name`.');
+    buffer.write(
+        _docComment(node.description, fallback: 'GraphQL interface `$name`.'));
     final impl =
         supertypes.isEmpty ? '' : ' implements ${supertypes.join(', ')}';
     buffer.writeln('abstract class $name$impl {');
     for (final field in sortedFields) {
       final fieldName = field.name.value;
+      buffer.write(_docComment(field.description,
+          directives: field.directives, indent: '  '));
       if (inherited.contains(fieldName)) buffer.writeln('  @override');
+      buffer.write(_deprecation(field.directives, indent: '  '));
       buffer.writeln(
           '  ${SchemaAnalyzer.getDartType(field.type)} get ${dartFieldName(fieldName, className: name)};');
     }
@@ -512,7 +564,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
         '/// Fallback for `$name` implementations unknown at generation time.');
     buffer.write(_generateJsonClass(
       className: unknownName,
-      fields: [for (final f in node.fields) (f.name.value, f.type)],
+      fields: node.fields.map(_fieldOf).toList(),
       supertypes: [name],
       overriddenFields: node.fields.map((f) => f.name.value).toSet(),
       fieldNameClassName: name,
@@ -526,8 +578,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
     final name = node.name.value;
     final unknownName = 'Unknown$name';
     return '''
-/// GraphQL union `$name`.
-abstract class $name {
+${_docComment(node.description, fallback: 'GraphQL union `$name`.')}abstract class $name {
   /// Creates the concrete member type matching `__typename`.
   factory $name.fromJson(Map<String, dynamic> json) {
 ${_typenameDispatch(name, '$unknownName(json)')}  }
@@ -570,12 +621,14 @@ class $unknownName implements $name {
   /// interface name so field names match the interface getters).
   static String _generateJsonClass({
     required String className,
-    required List<(String, TypeNode)> fields,
+    required List<_Field> fields,
+    StringValueNode? description,
     List<String> supertypes = const [],
     Set<String> overriddenFields = const {},
     String? fieldNameClassName,
   }) {
     final buffer = StringBuffer();
+    buffer.write(_docComment(description));
     buffer.writeln(
         '@JsonSerializable(includeIfNull: false, explicitToJson: true, fieldRename: FieldRename.none)');
     final impl =
@@ -583,12 +636,17 @@ class $unknownName implements $name {
     buffer.writeln('class $className$impl {');
 
     // Sort fields deterministically by name
-    final sortedFields = [...fields]..sort((a, b) => a.$1.compareTo(b.$1));
+    final sortedFields = [...fields]..sort((a, b) => a.name.compareTo(b.name));
 
-    for (final (fieldName, type) in sortedFields) {
+    for (final field in sortedFields) {
+      final fieldName = field.name;
+      final type = field.type;
       final dartName =
           dartFieldName(fieldName, className: fieldNameClassName ?? className);
+      buffer.write(_docComment(field.description,
+          directives: field.directives, indent: '  '));
       if (overriddenFields.contains(fieldName)) buffer.writeln('  @override');
+      buffer.write(_deprecation(field.directives, indent: '  '));
       for (final line in _fieldAnnotations(fieldName, dartName, type)) {
         buffer.writeln(line);
       }
@@ -597,10 +655,10 @@ class $unknownName implements $name {
 
     buffer.writeln();
     buffer.writeln('  $className({');
-    for (final (fieldName, type) in sortedFields) {
+    for (final field in sortedFields) {
       final dartName =
-          dartFieldName(fieldName, className: fieldNameClassName ?? className);
-      final fieldType = SchemaAnalyzer.getDartType(type);
+          dartFieldName(field.name, className: fieldNameClassName ?? className);
+      final fieldType = SchemaAnalyzer.getDartType(field.type);
       if (fieldType.startsWith('List<')) {
         // For list fields, provide empty list as default
         buffer.writeln('    this.$dartName = const [],');
@@ -623,6 +681,59 @@ class $unknownName implements $name {
     buffer.writeln();
 
     return buffer.toString();
+  }
+
+  /// `///` lines for a schema [description] (or [fallback] when there is
+  /// none), each ending with a newline; empty when there is nothing to write.
+  ///
+  /// Without `deprecated_annotations`, a `@deprecated` directive among
+  /// [directives] is mentioned here instead of becoming `@Deprecated`.
+  static String _docComment(StringValueNode? description,
+      {List<DirectiveNode> directives = const [],
+      String indent = '',
+      String? fallback}) {
+    var text = description?.value.trim() ?? '';
+    if (text.isEmpty) text = fallback ?? '';
+    final reason = _deprecationReason(directives);
+    if (reason != null && !CodegenConfigContext.deprecatedAnnotations) {
+      text =
+          text.isEmpty ? 'Deprecated: $reason' : '$text\n\nDeprecated: $reason';
+    }
+    if (text.isEmpty) return '';
+    return [
+      for (final line in text.split('\n'))
+        line.trimRight().isEmpty
+            ? '$indent///\n'
+            : '$indent/// ${line.trimRight()}\n'
+    ].join();
+  }
+
+  /// A `@Deprecated(...)` line for a GraphQL `@deprecated` directive when
+  /// `deprecated_annotations` is on, otherwise ''.
+  static String _deprecation(List<DirectiveNode> directives,
+      {String indent = ''}) {
+    final reason = _deprecationReason(directives);
+    if (reason == null || !CodegenConfigContext.deprecatedAnnotations) {
+      return '';
+    }
+    final escaped = reason
+        .replaceAll(r'\', r'\\')
+        .replaceAll("'", r"\'")
+        .replaceAll(r'$', r'\$')
+        .replaceAll('\n', r'\n');
+    return "$indent@Deprecated('$escaped')\n";
+  }
+
+  /// The reason of a `@deprecated` directive, or null when there is none.
+  static String? _deprecationReason(List<DirectiveNode> directives) {
+    final directive =
+        directives.where((d) => d.name.value == 'deprecated').firstOrNull;
+    if (directive == null) return null;
+    final reason = directive.arguments
+        .where((a) => a.name.value == 'reason')
+        .firstOrNull
+        ?.value;
+    return reason is StringValueNode ? reason.value : 'No longer supported';
   }
 
   /// Annotation lines (indented) for a generated field.
@@ -687,7 +798,13 @@ class $unknownName implements $name {
         ];
       }
       // Regular lists (enums, objects, built-in scalars): default value only
-      return ['  @JsonKey(${nameArg}defaultValue: const <$cleanInnerType>[])'];
+      final unknownArg = CodegenConfigContext.unknownEnumFallback &&
+              TypeRegistry.isEnum(cleanInnerType)
+          ? ', unknownEnumValue: $cleanInnerType.\$unknown'
+          : '';
+      return [
+        '  @JsonKey(${nameArg}defaultValue: const <$cleanInnerType>[]$unknownArg)'
+      ];
     }
 
     if (baseType == 'DateTime') {
@@ -732,6 +849,7 @@ class $unknownName implements $name {
   }
 
   /// Generates a class for an object type (legacy method, kept for compatibility)
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static String generateClassForType(ObjectTypeDefinitionNode type) {
     final className = type.name.value;
     final fields = type.fields;
@@ -865,6 +983,7 @@ class $unknownName implements $name {
   }
 
   /// Generates type definitions for older API compatibility
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static String generateTypeDefinitions(DocumentNode schemaDoc) {
     final buffer = StringBuffer();
 
@@ -972,6 +1091,7 @@ List<dynamic>? _byteListToJson(List<Byte>? list) {
   }
 
   /// Gets the Dart type from a TypeNode but preserves original type name for converter logic
+  @Deprecated('Not used by the generator; will be removed in 3.0.')
   static String getDartTypeFromOriginal(
       String originalType, bool isNullable, bool isList) {
     String dartType;

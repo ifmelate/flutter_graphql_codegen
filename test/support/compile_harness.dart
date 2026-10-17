@@ -19,13 +19,18 @@ class CompileResult {
 /// Writes [files] (package-relative path -> content) into a fresh package,
 /// runs build_runner and dart analyze and returns analyzer errors.
 ///
+/// Analyzer infos and warnings are reported as errors too for files where
+/// [mustBeClean] returns true (by default everything under `lib/`).
+///
 /// Each of [runScripts] (package-relative paths) is then executed with
 /// `dart run`; a non-zero exit code is reported as an error.
 Future<CompileResult> compileGenerated(
   Map<String, String> files, {
   Directory? workDir,
   List<String> runScripts = const [],
+  bool Function(String path)? mustBeClean,
 }) async {
+  final clean = mustBeClean ?? (path) => path.startsWith('lib/');
   final dir = workDir ?? await Directory.systemTemp.createTemp('fgc_compile_');
   final log = StringBuffer();
 
@@ -73,12 +78,14 @@ dev_dependencies:
   }
 
   r = await run(['analyze', '--no-fatal-warnings', '.']);
+  final issue = RegExp(r'^(?:info|warning) - (\S+?):\d+');
   final errors = [
     ...buildErrors,
-    ...'${r.stdout}'
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.startsWith('error -')),
+    ...'${r.stdout}'.split('\n').map((l) => l.trim()).where((l) {
+      if (l.startsWith('error -')) return true;
+      final path = issue.firstMatch(l)?.group(1);
+      return path != null && clean(path.replaceAll(r'\', '/'));
+    }),
   ];
 
   if (errors.isEmpty) {

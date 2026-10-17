@@ -29,19 +29,22 @@ void main() {
     await outDir.delete(recursive: true);
   });
 
-  GraphQLCodegenBuilder builder() => GraphQLCodegenBuilder(
+  GraphQLCodegenBuilder builder({List<String> warnings = const []}) =>
+      GraphQLCodegenBuilder(
         GraphQLCodegenConfig(
           // Not present on disk: must be read through the BuildStep.
           schemaUrl: 'lib/schema.graphql',
           outputDir: outDir.path,
           documentPaths: ['lib/graphql/**.graphql'],
+          warnings: warnings,
         ),
       );
 
-  Future<void> run(Map<String, String> assets) async {
+  Future<void> run(Map<String, String> assets,
+      {List<String> warnings = const []}) async {
     try {
       await testBuilder(
-        builder(),
+        builder(warnings: warnings),
         {'a|lib/schema.graphql': _schema, ...assets},
         rootPackage: 'a',
         onLog: (r) => logs.add('${r.level.name}: ${r.message}'),
@@ -110,5 +113,84 @@ query GetVersion { version }
   test('reports unknown root fields with an error code', () async {
     await run({'a|lib/graphql/broken.graphql': 'query Broken { nope }'});
     expect(logs, contains(allOf(contains('BLD103'), contains('nope'))));
+  });
+
+  test('index.dart import hint uses the package URI of output_dir', () {
+    expect(GraphQLCodegenBuilder.packageImportOf('app', 'lib/graphql/gen'),
+        'package:app/graphql/gen/index.dart');
+    expect(GraphQLCodegenBuilder.packageImportOf('app', './lib/gen/'),
+        'package:app/gen/index.dart');
+    expect(GraphQLCodegenBuilder.packageImportOf('app', 'generated'), isNull);
+  });
+
+  test('index.dart has no made-up usage example', () async {
+    await run({'a|lib/graphql/a.graphql': 'query A { version }'});
+    final index = output('index.dart')!;
+    expect(index, isNot(contains('your_app')));
+    expect(index, isNot(contains('getUserProfile')));
+  });
+
+  test('logs config warnings once per build', () async {
+    await run({
+      'a|lib/graphql/a.graphql': 'query A { version }',
+      'a|lib/graphql/b.graphql': 'query B { version }',
+    }, warnings: [
+      'Unknown option "x"'
+    ]);
+    expect(
+        logs.where(
+            (l) => l.startsWith('WARNING') && l.contains('Unknown option "x"')),
+        hasLength(1));
+  });
+
+  group('duplicate operations', () {
+    Matcher duplicateError(String name) =>
+        contains(allOf(contains('BLD104'), contains(name)));
+
+    test('in two documents are reported with both paths', () async {
+      await run({
+        'a|lib/graphql/a.graphql': 'query GetVersion { version }',
+        'a|lib/graphql/b.graphql': 'query GetVersion { version }',
+      });
+      expect(
+          logs,
+          contains(allOf(
+            contains('BLD104'),
+            contains('lib/graphql/a.graphql'),
+            contains('lib/graphql/b.graphql'),
+          )));
+    });
+
+    test('in one document are reported', () async {
+      await run({
+        'a|lib/graphql/a.graphql':
+            'query GetVersion { version }\nquery GetVersion { version }',
+      });
+      expect(logs, duplicateError('GetVersion'));
+    });
+
+    test('whose names map to the same file are reported', () async {
+      await run({
+        'a|lib/graphql/a.graphql': 'query GetVersion { version }',
+        'a|lib/graphql/b.graphql': 'query getVersion { version }',
+      });
+      expect(logs, duplicateError('get_version_graphql.g.dart'));
+    });
+
+    test('are not reported when a document is regenerated', () async {
+      await run({'a|lib/graphql/a.graphql': 'query GetVersion { version }'});
+      await run({'a|lib/graphql/a.graphql': 'query GetVersion { version }'});
+      expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    });
+
+    test('are not reported when an operation moved to another document',
+        () async {
+      await run({'a|lib/graphql/a.graphql': 'query GetVersion { version }'});
+      await run({
+        'a|lib/graphql/a.graphql': 'query Other { version }',
+        'a|lib/graphql/b.graphql': 'query GetVersion { version }',
+      });
+      expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    });
   });
 }
