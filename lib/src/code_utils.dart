@@ -164,4 +164,24 @@ class TypeRegistry {
   /// True for interfaces and unions.
   static bool isAbstract(String typeName) =>
       _interfaceTypes.contains(typeName) || _unionTypes.contains(typeName);
+
+  /// Scalars with a built-in Dart representation instead of a generated
+  /// wrapper class.
+  static const Set<String> builtInScalarTypes = {
+    'Decimal', 'DateTime', 'Short', 'Byte', 'Long', 'LocalDate', //
+  };
+
+  /// True for custom scalars that get a generated wrapper class.
+  static bool isWrappedScalar(String typeName) =>
+      _customScalars.contains(typeName) &&
+      !builtInScalarTypes.contains(typeName);
+
+  /// True when the generator declares a Dart type for schema type [typeName]
+  /// (object, input, interface, union, enum or wrapped custom scalar).
+  static bool declaresType(String typeName) =>
+      _objectTypes.contains(typeName) ||
+      _inputTypes.contains(typeName) ||
+      _enumTypes.contains(typeName) ||
+      isAbstract(typeName) ||
+      isWrappedScalar(typeName);
 }

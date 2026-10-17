@@ -34,6 +34,19 @@ const Set<String> dartReservedWords = {
   'switch', 'this', 'throw', 'true', 'try', 'var', 'void', 'while', 'with',
 };
 
+/// Names the generated code refers to without a prefix (dart:core and
+/// json_annotation types, built-in helper classes). A schema type with one of
+/// these names would shadow them, so its Dart name gets a trailing underscore.
+const Set<String> reservedTypeNames = {
+  'Map', 'List', 'Set', 'String', 'Object', 'int', 'double', 'num', 'bool', //
+  'dynamic', 'DateTime', 'Future', 'Stream', 'ArgumentError', 'StateError',
+  'Deprecated', 'override', 'JsonConverter', 'JsonSerializable', 'JsonKey',
+  'JsonValue', 'FieldRename', 'Decimal', 'Long', 'Byte', 'EnumConverter',
+  'DecimalConverter', 'DateTimeConverter', 'LocalDateConverter',
+  'LongConverter', 'ByteConverter', 'SafeStringConverter', 'SafeBoolConverter',
+  'SafeIntConverter', 'SafeDoubleConverter', 'SafeDecimalConverter',
+};
+
 /// Members every Dart object has; a generated field with one of these names
 /// would clash with (or accidentally override) them.
 const Set<String> _objectMemberNames = {

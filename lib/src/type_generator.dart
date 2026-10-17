@@ -290,33 +290,56 @@ $enumConverters
 
 $typeDefinitions
 
+${_generatePossibleTypes()}
+
 // Helper functions for list conversions
 ${_generateListConverterHelpers(TypeRegistry.customScalars)}
 ''';
   }
 
+  /// The concrete object types of every interface and union, in the shape
+  /// `GraphQLCache(possibleTypes: ...)` expects for matching fragments.
+  static String _generatePossibleTypes() {
+    final abstractTypes = {
+      ...TypeRegistry.interfaceTypes,
+      ...TypeRegistry.unionTypes,
+    }.toList()
+      ..sort();
+    final buffer = StringBuffer()
+      ..writeln('/// Concrete types of every interface and union, for '
+          '`GraphQLCache(possibleTypes: possibleTypes)`.');
+    if (abstractTypes.isEmpty) {
+      buffer.write('const Map<String, Set<String>> possibleTypes = {};');
+      return buffer.toString();
+    }
+    buffer.writeln('const Map<String, Set<String>> possibleTypes = {');
+    for (final name in abstractTypes) {
+      final members = TypeRegistry.possibleTypes(name).map((t) => "'$t'");
+      buffer.writeln(members.isEmpty
+          ? "  '$name': <String>{},"
+          : "  '$name': {${members.join(', ')}},");
+    }
+    buffer.write('};');
+    return buffer.toString();
+  }
+
   /// Custom scalars that get the generic generated wrapper class + converter.
   static Iterable<String> _wrappedScalars(Set<String> customScalars) =>
-      customScalars.where((scalar) =>
-          scalar != 'Decimal' &&
-          scalar != 'DateTime' &&
-          scalar != 'Short' &&
-          scalar != 'Byte' &&
-          scalar != 'Long' &&
-          scalar != 'LocalDate');
+      customScalars.where(TypeRegistry.isWrappedScalar);
 
   /// Generates scalar converters for custom scalar types
   static String _generateScalarConverters(Set<String> customScalars) {
     final buffer = StringBuffer();
 
     for (final scalar in _wrappedScalars(customScalars)) {
+      final name = SchemaAnalyzer.dartTypeName(scalar);
       buffer.writeln('''
 /// Wrapper for the custom GraphQL scalar `$scalar`.
 ///
 /// [raw] holds the JSON value exactly as received (string, number, map, ...).
-class $scalar {
+class $name {
   final Object? raw;
-  const $scalar(this.raw);
+  const $name(this.raw);
 
   /// String form of the value; non-string JSON values are JSON-encoded.
   String get value => raw is String ? raw as String : jsonEncode(raw);
@@ -325,20 +348,20 @@ class $scalar {
   String toString() => value;
 
   @override
-  bool operator ==(Object other) => other is $scalar && other.value == value;
+  bool operator ==(Object other) => other is $name && other.value == value;
 
   @override
   int get hashCode => value.hashCode;
 }
 
-class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
-  const ${scalar}Converter();
+class ${name}Converter implements JsonConverter<$name, dynamic> {
+  const ${name}Converter();
 
   @override
-  $scalar fromJson(dynamic json) => $scalar(json);
+  $name fromJson(dynamic json) => $name(json);
 
   @override
-  dynamic toJson($scalar object) => object.raw;
+  dynamic toJson($name object) => object.raw;
 }
 ''');
     }
@@ -351,7 +374,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
 
     for (final definition in _sortedDefinitions(schemaDoc)) {
       if (definition is EnumTypeDefinitionNode) {
-        final enumName = definition.name.value;
+        final enumName = SchemaAnalyzer.dartTypeName(definition.name.value);
         buffer.write(_docComment(definition.description));
         buffer.writeln('enum $enumName {');
         // Sort enum values for determinism
@@ -387,7 +410,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
 
     for (final definition in _sortedDefinitions(schemaDoc)) {
       if (definition is EnumTypeDefinitionNode) {
-        final enumName = definition.name.value;
+        final enumName = SchemaAnalyzer.dartTypeName(definition.name.value);
         final values = _sortedEnumValues(definition);
         buffer.writeln(
             'class ${enumName}Converter extends JsonConverter<$enumName, String> {');
@@ -501,10 +524,10 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
       Map<String, InterfaceTypeDefinitionNode> interfaces = const {}]) {
     final typeName = typeNode.name.value;
     return _generateJsonClass(
-      className: typeName,
+      className: SchemaAnalyzer.dartTypeName(typeName),
       description: typeNode.description,
       fields: typeNode.fields.map(_fieldOf).toList(),
-      supertypes: TypeRegistry.supertypes(typeName),
+      supertypes: _dartSupertypes(typeName),
       overriddenFields: _inheritedFieldNames(typeName, interfaces),
     );
   }
@@ -514,7 +537,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
       InputObjectTypeDefinitionNode inputNode,
       [String schema = '']) {
     return _generateJsonClass(
-      className: inputNode.name.value,
+      className: SchemaAnalyzer.dartTypeName(inputNode.name.value),
       description: inputNode.description,
       fields: inputNode.fields.map(_inputFieldOf).toList(),
     );
@@ -526,16 +549,17 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
     InterfaceTypeDefinitionNode node,
     Map<String, InterfaceTypeDefinitionNode> interfaces,
   ) {
-    final name = node.name.value;
-    final supertypes = TypeRegistry.supertypes(name);
-    final inherited = _inheritedFieldNames(name, interfaces);
-    final unknownName = 'Unknown$name';
+    final graphqlName = node.name.value;
+    final name = SchemaAnalyzer.dartTypeName(graphqlName);
+    final supertypes = _dartSupertypes(graphqlName);
+    final inherited = _inheritedFieldNames(graphqlName, interfaces);
+    final unknownName = 'Unknown$graphqlName';
     final sortedFields = [...node.fields]
       ..sort((a, b) => a.name.value.compareTo(b.name.value));
 
     final buffer = StringBuffer();
-    buffer.write(
-        _docComment(node.description, fallback: 'GraphQL interface `$name`.'));
+    buffer.write(_docComment(node.description,
+        fallback: 'GraphQL interface `$graphqlName`.'));
     final impl =
         supertypes.isEmpty ? '' : ' implements ${supertypes.join(', ')}';
     buffer.writeln('abstract class $name$impl {');
@@ -552,7 +576,7 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
     buffer.writeln(
         '  /// Creates the concrete implementation matching `__typename`.');
     buffer.writeln('  factory $name.fromJson(Map<String, dynamic> json) {');
-    buffer.write(_typenameDispatch(name, '$unknownName.fromJson(json)'));
+    buffer.write(_typenameDispatch(graphqlName, '$unknownName.fromJson(json)'));
     buffer.writeln('  }');
     buffer.writeln();
     if (supertypes.isNotEmpty) buffer.writeln('  @override');
@@ -561,7 +585,8 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
     buffer.writeln();
 
     buffer.writeln(
-        '/// Fallback for `$name` implementations unknown at generation time.');
+        '/// Fallback for `$graphqlName` implementations unknown at generation '
+        'time.');
     buffer.write(_generateJsonClass(
       className: unknownName,
       fields: node.fields.map(_fieldOf).toList(),
@@ -575,18 +600,19 @@ class ${scalar}Converter implements JsonConverter<$scalar, dynamic> {
   /// Generates an abstract class for a GraphQL union plus an `Unknown*`
   /// fallback that keeps the raw JSON.
   static String _generateUnionDefinition(UnionTypeDefinitionNode node) {
-    final name = node.name.value;
-    final unknownName = 'Unknown$name';
+    final graphqlName = node.name.value;
+    final name = SchemaAnalyzer.dartTypeName(graphqlName);
+    final unknownName = 'Unknown$graphqlName';
     return '''
-${_docComment(node.description, fallback: 'GraphQL union `$name`.')}abstract class $name {
+${_docComment(node.description, fallback: 'GraphQL union `$graphqlName`.')}abstract class $name {
   /// Creates the concrete member type matching `__typename`.
   factory $name.fromJson(Map<String, dynamic> json) {
-${_typenameDispatch(name, '$unknownName(json)')}  }
+${_typenameDispatch(graphqlName, '$unknownName(json)')}  }
 
   Map<String, dynamic> toJson();
 }
 
-/// Fallback for `$name` members unknown at generation time.
+/// Fallback for `$graphqlName` members unknown at generation time.
 class $unknownName implements $name {
   const $unknownName(this.json);
 
@@ -601,12 +627,19 @@ class $unknownName implements $name {
 ''';
   }
 
+  /// Dart names of the interfaces and unions [typeName] implements.
+  static List<String> _dartSupertypes(String typeName) =>
+      TypeRegistry.supertypes(typeName)
+          .map(SchemaAnalyzer.dartTypeName)
+          .toList();
+
   static String _typenameDispatch(String abstractType, String fallback) {
     final buffer = StringBuffer();
     buffer.writeln("    switch (json['__typename']) {");
     for (final concrete in TypeRegistry.possibleTypes(abstractType)) {
       buffer.writeln("      case '$concrete':");
-      buffer.writeln('        return $concrete.fromJson(json);');
+      buffer.writeln(
+          '        return ${SchemaAnalyzer.dartTypeName(concrete)}.fromJson(json);');
     }
     buffer.writeln('      default:');
     buffer.writeln('        return $fallback;');
@@ -746,6 +779,8 @@ class $unknownName implements $name {
         .replaceAll('>', '');
     final isListField = fieldType.startsWith('List<');
     final isNullable = fieldType.endsWith('?');
+    // Registry lookups use the GraphQL name; Dart names may be escaped.
+    final graphqlBase = getOriginalGraphQLType(type);
 
     // Add @JsonKey annotation for field name preservation so json_serializable
     // never renames GraphQL fields (and escaped Dart names map back).
@@ -763,10 +798,7 @@ class $unknownName implements $name {
           5, fieldType.length - (fieldType.endsWith('>?') ? 2 : 1));
       final cleanInnerType = innerType.replaceAll('?', '');
 
-      if (TypeRegistry.isCustomScalar(cleanInnerType) &&
-          cleanInnerType != 'Decimal' &&
-          cleanInnerType != 'Short' &&
-          cleanInnerType != 'Byte') {
+      if (TypeRegistry.isWrappedScalar(graphqlBase)) {
         // For lists of custom scalars, use JsonKey with converter
         final helper = cleanInnerType.toLowerCase();
         return [
@@ -799,7 +831,7 @@ class $unknownName implements $name {
       }
       // Regular lists (enums, objects, built-in scalars): default value only
       final unknownArg = CodegenConfigContext.unknownEnumFallback &&
-              TypeRegistry.isEnum(cleanInnerType)
+              TypeRegistry.isEnum(graphqlBase)
           ? ', unknownEnumValue: $cleanInnerType.\$unknown'
           : '';
       return [
@@ -817,14 +849,8 @@ class $unknownName implements $name {
     if (baseType == 'Decimal') return withName('  @SafeDecimalConverter()');
     if (baseType == 'Long') return withName('  @LongConverter()');
     if (baseType == 'Byte') return withName('  @ByteConverter()');
-    if (TypeRegistry.isEnum(baseType)) {
-      return withName('  @${baseType}Converter()');
-    }
-    if (TypeRegistry.isCustomScalar(baseType) &&
-        baseType != 'Decimal' &&
-        baseType != 'Long' &&
-        baseType != 'Short' &&
-        baseType != 'Byte') {
+    if (TypeRegistry.isEnum(graphqlBase) ||
+        TypeRegistry.isWrappedScalar(graphqlBase)) {
       return withName('  @${baseType}Converter()');
     }
     // Safe converters for non-nullable primitives
@@ -1010,14 +1036,15 @@ class $unknownName implements $name {
 
     // Generate helpers for each custom scalar type
     for (final scalar in _wrappedScalars(customScalars)) {
+      final name = SchemaAnalyzer.dartTypeName(scalar);
       buffer.writeln('''
 // Helper functions for $scalar list conversion
-List<$scalar>? _${scalar.toLowerCase()}ListFromJson(List<dynamic>? json) {
-  if (json == null) return null;
-  return json.map((item) => $scalar(item)).toList();
+List<$name> _${name.toLowerCase()}ListFromJson(List<dynamic>? json) {
+  if (json == null) return const [];
+  return json.map((item) => $name(item)).toList();
 }
 
-List<dynamic>? _${scalar.toLowerCase()}ListToJson(List<$scalar>? list) {
+List<dynamic>? _${name.toLowerCase()}ListToJson(List<$name>? list) {
   if (list == null) return null;
   return list.map((item) => item.raw).toList();
 }
@@ -1027,8 +1054,8 @@ List<dynamic>? _${scalar.toLowerCase()}ListToJson(List<$scalar>? list) {
     // Helper for DateTime lists
     buffer.writeln('''
 // Helper functions for DateTime list conversion
-List<DateTime>? _dateTimeListFromJson(List<dynamic>? json) {
-  if (json == null) return null;
+List<DateTime> _dateTimeListFromJson(List<dynamic>? json) {
+  if (json == null) return const [];
   return json.map((item) => DateTime.parse(item.toString())).toList();
 }
 
@@ -1039,8 +1066,8 @@ List<String>? _dateTimeListToJson(List<DateTime>? list) {
 }
 
 // Helper functions for LocalDate list conversion
-List<DateTime>? _localDateListFromJson(List<dynamic>? json) {
-  if (json == null) return null;
+List<DateTime> _localDateListFromJson(List<dynamic>? json) {
+  if (json == null) return const [];
   return json.map((item) => DateTime.parse(item.toString())).toList();
 }
 
@@ -1053,8 +1080,8 @@ List<String>? _localDateListToJson(List<DateTime>? list) {
     // Helper for Decimal lists
     buffer.writeln('''
 // Helper functions for Decimal list conversion
-List<Decimal>? _decimalListFromJson(List<dynamic>? json) {
-  if (json == null) return null;
+List<Decimal> _decimalListFromJson(List<dynamic>? json) {
+  if (json == null) return const [];
   return json.map((item) => Decimal(item.toString())).toList();
 }
 

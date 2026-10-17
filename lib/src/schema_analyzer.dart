@@ -4,6 +4,7 @@ library;
 import 'package:gql/ast.dart';
 import 'code_utils.dart';
 import 'config_context.dart';
+import 'naming.dart';
 
 /// Utility class for analyzing GraphQL schemas
 class SchemaAnalyzer {
@@ -204,24 +205,30 @@ class SchemaAnalyzer {
     }
   }
 
+  /// The Dart name of a type the generator declares for schema type
+  /// [graphqlName]: names in [reservedTypeNames] get a trailing underscore.
+  static String dartTypeName(String graphqlName) =>
+      TypeRegistry.declaresType(graphqlName) &&
+              reservedTypeNames.contains(graphqlName)
+          ? '${graphqlName}_'
+          : graphqlName;
+
   /// Gets the Dart type from a TypeNode
   static String getDartType(TypeNode type) {
     if (type is NamedTypeNode) {
       final original = type.name.value;
-      // Allow scalar mapping override from config
-      final mapped = CodegenConfigContext.scalarMapping[original] ??
-          GraphQLConstants.scalarToDartType[original] ??
-          original;
-
-      final isObjectType = TypeRegistry.objectTypes.contains(original);
-
-      // Respect schema NonNull exactly for scalars/enums/custom scalars
-      if (!isObjectType) {
-        return type.isNonNull ? mapped : '$mapped?';
+      final String mapped;
+      if (TypeRegistry.objectTypes.contains(original)) {
+        mapped = dartTypeName(original);
+      } else {
+        // Allow scalar mapping override from config
+        mapped = CodegenConfigContext.scalarMapping[original] ??
+            (TypeRegistry.declaresType(original)
+                ? dartTypeName(original)
+                : GraphQLConstants.scalarToDartType[original] ?? original);
       }
-
-      // For object types: we still respect NonNull, but mapping keeps class name
-      return type.isNonNull ? original : '$original?';
+      // Respect schema NonNull exactly
+      return type.isNonNull ? mapped : '$mapped?';
     } else if (type is ListTypeNode) {
       // Compute element Dart type first (it will include '?' if nullable)
       final innerType = getDartType(type.type);
