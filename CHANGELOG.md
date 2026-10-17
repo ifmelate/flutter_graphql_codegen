@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Typed options for `package:graphql`: every operation file has
+  `<operation>QueryOptions` / `<operation>WatchQueryOptions` (queries),
+  `<operation>MutationOptions` and `<operation>SubscriptionOptions`. They take
+  typed variables and the full set of options (fetch and error policies,
+  polling, optimistic results, mutation `update`, ...), and use the generated
+  parser as `parserFn`, so `parsedData` and `ObservableQuery` results are typed
+- `read<Operation>` / `write<Operation>` cache helpers on the client extension
+  of queries
+- `scalar_mapping` entries can be `{type, import, converter}`: the import is
+  added to the generated files, and the converter is used for fields, list
+  elements, variables and results. Mapped types without a converter are read
+  with `fromJson` and written with `toJson`
+- `strict_scalars`: fail with `SCH401` for custom scalars without a mapping
+- `dart run flutter_graphql_codegen:fetch_schema` downloads the schema from
+  `schema_endpoint` (new config key) into `schema_url`, so the schema can live
+  in the repository and builds don't need the network
+
+### Fixed
+- Variables of a scalar mapped to `DateTime` (`scalar_mapping: {Date:
+  DateTime}`) were put into the request as `DateTime` objects, which can't be
+  sent as JSON. They are now serialized like `DateTime` scalars
+
 ## [2.2.0] - 2026-10-17
 
 ### Added
