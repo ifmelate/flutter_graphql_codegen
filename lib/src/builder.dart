@@ -9,12 +9,15 @@ import 'package:flutter_graphql_codegen/src/schema_downloader.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 import 'package:flutter_graphql_codegen/src/client_extension_generator.dart';
 import 'package:flutter_graphql_codegen/src/operation_analyzer.dart';
+import 'package:dart_style/dart_style.dart' show FormatterException;
 import 'package:path/path.dart' as p;
+import 'package:pub_semver/pub_semver.dart';
 
 import 'config.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
+import 'formatting.dart';
 import 'naming.dart';
 
 /// Schema-derived data shared by all operations of a build.
@@ -38,6 +41,11 @@ class GraphQLCodegenBuilder implements Builder {
   String? _lastWrittenTypes;
   bool _loggedConfigWarnings = false;
 
+  /// Language version generated code is formatted for (that of the package
+  /// being built); null means the formatter's latest.
+  Version? _languageVersion;
+  bool _languageVersionResolved = false;
+
   GraphQLCodegenBuilder(this.config);
 
   @override
@@ -47,6 +55,11 @@ class GraphQLCodegenBuilder implements Builder {
     // Skip non-GraphQL files
     if (!inputId.path.endsWith('.graphql')) {
       return;
+    }
+
+    if (!_languageVersionResolved) {
+      _languageVersionResolved = true;
+      _languageVersion = await _packageLanguageVersion(buildStep);
     }
 
     if (!_loggedConfigWarnings) {
@@ -386,7 +399,7 @@ $usage''';
 
       // Write index file
       final indexFile = File(p.join(config.outputDir, 'index.dart'));
-      await _writeIfChanged(indexFile, indexContent);
+      await _writeIfChanged(indexFile, _format(indexContent, 'index.dart'));
     } catch (e, st) {
       throw _report(CodegenException(
           CodegenErrorCodes.buildIndexFailed, 'Failed to generate index.dart',
@@ -404,6 +417,28 @@ $usage''';
     return 'package:$package/${inLib.isEmpty ? '' : '$inLib/'}index.dart';
   }
 
+  static Future<Version?> _packageLanguageVersion(BuildStep buildStep) async {
+    try {
+      final config = await buildStep.packageConfig;
+      final version = config[buildStep.inputId.package]?.languageVersion;
+      return version == null ? null : Version(version.major, version.minor, 0);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Formats generated [code]; if that fails (a generator bug), the code is
+  /// written unformatted so it can still be inspected.
+  String _format(String code, String fileName) {
+    try {
+      return formatGeneratedCode(code, languageVersion: _languageVersion);
+    } on FormatterException catch (e) {
+      log.warning('Could not format generated $fileName, writing it '
+          'unformatted. Please report this: ${e.message()}');
+      return code;
+    }
+  }
+
   /// Writes types.dart when its content changed since the last write.
   Future<void> _writeTypesFile(String typesCode) async {
     if (typesCode == _lastWrittenTypes) return;
@@ -415,7 +450,7 @@ $usage''';
     }
 
     final typesFile = File(p.join(config.outputDir, 'types.dart'));
-    await _writeIfChanged(typesFile, typesCode);
+    await _writeIfChanged(typesFile, _format(typesCode, 'types.dart'));
     _lastWrittenTypes = typesCode;
     log.fine('Generated types file: ${typesFile.path}');
   }
@@ -434,7 +469,7 @@ $usage''';
     final filePath = p.join(config.outputDir, fileName);
     final file = File(filePath);
 
-    await _writeIfChanged(file, content);
+    await _writeIfChanged(file, _format(content, fileName));
   }
 
   /// Finds all generated .g.dart files
