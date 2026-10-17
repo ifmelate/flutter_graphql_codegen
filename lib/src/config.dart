@@ -23,6 +23,10 @@ class GraphQLCodegenConfig {
   /// (otherwise the deprecation is only mentioned in the doc comment).
   final bool deprecatedAnnotations;
 
+  /// Checks operations against the schema (fields, arguments, variables,
+  /// selections) before generating code for them.
+  final bool validateDocuments;
+
   /// HTTP headers sent when downloading a remote schema. Values may reference
   /// environment variables as `${NAME}`.
   final Map<String, String> schemaHeaders;
@@ -36,7 +40,7 @@ class GraphQLCodegenConfig {
     'schema_url', 'schema', 'document_paths', 'documents', 'output_dir', //
     'strict_nullability', 'file_naming', 'emit_index', 'scalar_mapping',
     'schema_headers', 'diagnostics_format', 'unknown_enum_fallback',
-    'deprecated_annotations',
+    'deprecated_annotations', 'validate_documents',
   };
 
   GraphQLCodegenConfig({
@@ -49,6 +53,7 @@ class GraphQLCodegenConfig {
     this.diagnosticsFormat = 'plain',
     this.unknownEnumFallback = false,
     this.deprecatedAnnotations = false,
+    this.validateDocuments = true,
     Map<String, String>? scalarMapping,
     Map<String, String>? schemaHeaders,
     this.warnings = const [],
@@ -108,6 +113,7 @@ class GraphQLCodegenConfig {
           yamlMap['unknown_enum_fallback'] as bool? ?? false;
       final deprecatedAnnotations =
           yamlMap['deprecated_annotations'] as bool? ?? false;
+      final validateDocuments = yamlMap['validate_documents'] as bool? ?? true;
       diagFormat =
           (yamlMap['diagnostics_format'] as String?)?.trim() ?? 'plain';
       final diagnosticsFormat = diagFormat;
@@ -153,6 +159,7 @@ class GraphQLCodegenConfig {
         diagnosticsFormat: diagnosticsFormat,
         unknownEnumFallback: unknownEnumFallback,
         deprecatedAnnotations: deprecatedAnnotations,
+        validateDocuments: validateDocuments,
         scalarMapping: scalarMappingMap,
         schemaHeaders: schemaHeaders,
         warnings: [

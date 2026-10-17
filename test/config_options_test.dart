@@ -65,6 +65,7 @@ schema_headers: {}
 diagnostics_format: plain
 unknown_enum_fallback: true
 deprecated_annotations: true
+validate_documents: true
 ''');
       expect(cfg.warnings, isEmpty);
     });

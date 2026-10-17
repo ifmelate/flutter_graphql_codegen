@@ -7,6 +7,7 @@ import 'code_utils.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
+import 'document_validator.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
 
@@ -70,6 +71,9 @@ $body''';
 
     final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
+    if (CodegenConfigContext.validateDocuments) {
+      DocumentValidator(schema).check(operation, allFragments);
+    }
 
     final context = _OperationContext(
       name: operationName,
