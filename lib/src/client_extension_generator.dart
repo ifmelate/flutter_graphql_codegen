@@ -7,6 +7,7 @@ import 'code_utils.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
+import 'document_validator.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
 
@@ -70,6 +71,9 @@ $body''';
 
     final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
+    if (CodegenConfigContext.validateDocuments) {
+      DocumentValidator(schema).check(operation, allFragments);
+    }
 
     final context = _OperationContext(
       name: operationName,
@@ -198,7 +202,9 @@ $body''';
 
     final name = (type as NamedTypeNode).name.value;
     if (CodegenConfigContext.scalarMapping.containsKey(name)) return v;
-    switch (name) {
+    // A schema type named like a built-in scalar (e.g. `type Decimal`) is
+    // handled as the type the generator declares for it.
+    switch (TypeRegistry.declaresType(name) ? '' : name) {
       case 'Int':
       case 'Float':
       case 'String':
@@ -218,7 +224,7 @@ $body''';
         return 'const ByteConverter().toJson($v)';
     }
     if (TypeRegistry.isEnum(name) || TypeRegistry.isCustomScalar(name)) {
-      return 'const ${name}Converter().toJson($v)';
+      return 'const ${SchemaAnalyzer.dartTypeName(name)}Converter().toJson($v)';
     }
     if (TypeRegistry.inputTypes.contains(name)) return '$v.toJson()';
     return v;
@@ -433,7 +439,9 @@ $options
           return '$v as $mapped';
       }
     }
-    switch (name) {
+    // A schema type named like a built-in scalar (e.g. `type Decimal`) is
+    // handled as the type the generator declares for it.
+    switch (TypeRegistry.declaresType(name) ? '' : name) {
       case 'Int':
       case 'Short':
         return 'const SafeIntConverter().fromJson($v)';
@@ -455,16 +463,17 @@ $options
       case 'Byte':
         return 'const ByteConverter().fromJson($v)';
     }
+    final dartName = SchemaAnalyzer.dartTypeName(name);
     if (TypeRegistry.isEnum(name)) {
-      return 'const ${name}Converter().fromJson($v as String)';
+      return 'const ${dartName}Converter().fromJson($v as String)';
     }
     if (TypeRegistry.isCustomScalar(name)) {
-      return 'const ${name}Converter().fromJson($v)';
+      return 'const ${dartName}Converter().fromJson($v)';
     }
     if (TypeRegistry.objectTypes.contains(name) ||
         TypeRegistry.isAbstract(name) ||
         definedTypes.contains(name)) {
-      return '$name.fromJson($v as Map<String, dynamic>)';
+      return '$dartName.fromJson($v as Map<String, dynamic>)';
     }
     return v;
   }

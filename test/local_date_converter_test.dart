@@ -151,7 +151,7 @@ void main() {
       expect(
           generatedTypes,
           contains(
-              'List<DateTime>? _localDateListFromJson(List<dynamic>? json)'));
+              'List<DateTime> _localDateListFromJson(List<dynamic>? json)'));
       expect(generatedTypes,
           contains('List<String>? _localDateListToJson(List<DateTime>? list)'));
 

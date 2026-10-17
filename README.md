@@ -102,6 +102,7 @@ schema_headers:
 | `diagnostics_format` | `plain` | `plain` or `json` error output |
 | `unknown_enum_fallback` | `false` | Add a `$unknown` value to every enum instead of throwing on values the server added later (see below) |
 | `deprecated_annotations` | `false` | Turn schema `@deprecated` into Dart `@Deprecated` (see below) |
+| `validate_documents` | `true` | Check operations against the schema before generating (see [Errors](#errors)) |
 
 A misspelled key is ignored with a warning that suggests the closest option.
 
@@ -149,10 +150,14 @@ schema changes.
 `output_dir` ends up with:
 
 - `types.dart`, with a class for every object, input, interface and union in the
-  schema, plus enums and JSON converters
+  schema, plus enums, JSON converters and a `possibleTypes` map
 - one `<operation>_graphql.g.dart` per named operation (a file with three
   operations produces three files)
 - `index.dart`, which exports all of the above
+
+The files are formatted with `dart format` for your package's language version,
+so a `dart format --set-exit-if-changed` check in CI passes without excluding
+them.
 
 For `query GetUser($id: ID!)`, the operation file contains:
 
@@ -227,6 +232,16 @@ for (final result in await client.searchData({'term': 'dart'})) {
 }
 ```
 
+Pass `possibleTypes` to the cache, so fragments on interfaces and unions are
+matched correctly when results are read back from it:
+
+```dart
+final client = GraphQLClient(
+  link: link,
+  cache: GraphQLCache(possibleTypes: possibleTypes),
+);
+```
+
 ### Fragments
 
 Fragments can live in their own files, as long as those files match
@@ -237,6 +252,13 @@ Fragments can live in their own files, as long as those files match
 A field called `class` or an enum value called `default` gets a trailing
 underscore in Dart (`class_`, `Role.default_`). JSON keys and values sent to the
 server keep the original GraphQL names.
+
+The same goes for schema types named like something the generated code relies
+on: `dart:core` types (`Map`, `String`, `Object`, `Future`, `Set`, ...),
+`json_annotation` classes (`JsonKey`, ...) and the built-in helpers (`Decimal`,
+`Long`, `Byte` when they are object types rather than scalars). `type Map`
+becomes `class Map_`, `scalar Object` becomes `Object_`. `__typename` and
+`possibleTypes` keep the GraphQL names.
 
 ## Custom scalars
 
@@ -282,9 +304,18 @@ Problems found during generation are reported with a code:
 | `BLD100` | An operation file doesn't parse |
 | `BLD101` | An operation uses a fragment that isn't defined anywhere |
 | `BLD102` | Two fragments share a name but differ |
-| `BLD103` | An operation selects a root field the schema doesn't have |
+| `BLD103` | An operation selects a field the schema doesn't have (at any depth), or a plain field on a union |
 | `BLD104` | Two operations have the same name (or names that map to the same file) |
+| `BLD105` | Unknown argument, or a required argument is missing |
+| `BLD106` | A variable is used but not declared, declared but never used, or has an unknown or non-input type |
+| `BLD107` | A selection set is missing (object field) or not allowed (scalar field), or a fragment is on an unknown or non-composite type |
 | `BLD200` | Writing `index.dart` failed |
+
+`BLD103` and `BLD105`–`BLD107` come from checking each operation against the
+schema. All problems of an operation are reported together, with the path and
+line of each one. These are documents a GraphQL server would reject anyway. If a
+check gets in the way while you fix an existing project, turn it off with
+`validate_documents: false`.
 
 ## Known limitations
 

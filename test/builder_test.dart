@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:build_test/build_test.dart';
+import 'package:dart_style/dart_style.dart';
 import 'package:flutter_graphql_codegen/src/builder.dart';
 import 'package:flutter_graphql_codegen/src/config.dart';
 import 'package:flutter_graphql_codegen/src/config_context.dart';
@@ -87,6 +88,24 @@ query GetVersion { version }
     final index = output('index.dart')!;
     expect(index, contains("export 'get_user_graphql.g.dart';"));
     expect(index, contains("export 'rename_graphql.g.dart';"));
+  });
+
+  test('writes dart-formatted files', () async {
+    await run({
+      'a|lib/graphql/a.graphql': r'''
+query GetUser($id: ID!) { user(id: $id) { id name } }
+''',
+    });
+    final formatter =
+        DartFormatter(languageVersion: DartFormatter.latestLanguageVersion);
+    for (final name in [
+      'types.dart',
+      'get_user_graphql.g.dart',
+      'index.dart',
+    ]) {
+      final code = output(name)!;
+      expect(formatter.format(code), code, reason: '$name is not formatted');
+    }
   });
 
   test('skips schema and fragment-only documents', () async {

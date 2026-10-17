@@ -18,6 +18,9 @@ class CodegenErrorCodes {
   static const String buildDuplicateFragment = 'BLD102';
   static const String buildUnknownField = 'BLD103';
   static const String buildDuplicateOperation = 'BLD104';
+  static const String buildInvalidArgument = 'BLD105';
+  static const String buildInvalidVariable = 'BLD106';
+  static const String buildInvalidSelection = 'BLD107';
   static const String buildIndexFailed = 'BLD200';
 }
 

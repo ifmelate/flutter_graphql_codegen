@@ -9,6 +9,7 @@ class CodegenConfigContext {
   static Map<String, String> scalarMapping = <String, String>{};
   static bool unknownEnumFallback = false;
   static bool deprecatedAnnotations = false;
+  static bool validateDocuments = true;
 
   /// Resets all fields to defaults. Useful for tests and watch-mode rebuilds.
   static void reset() {
@@ -19,5 +20,6 @@ class CodegenConfigContext {
     scalarMapping = <String, String>{};
     unknownEnumFallback = false;
     deprecatedAnnotations = false;
+    validateDocuments = true;
   }
 }

@@ -183,13 +183,16 @@ void check(bool condition, String message) {
 Future<void> main() async {
   final client = GraphQLClient(
     link: FakeLink(),
-    cache: GraphQLCache(),
+    cache: GraphQLCache(possibleTypes: possibleTypes),
     defaultPolicies: DefaultPolicies(
       query: Policies(fetch: FetchPolicy.noCache),
       mutate: Policies(fetch: FetchPolicy.noCache),
       subscribe: Policies(fetch: FetchPolicy.noCache),
     ),
   );
+
+  check(possibleTypes['SearchResult']!.containsAll(['Post', 'User']),
+      'possibleTypes lists union members');
 
   // Unions dispatch on __typename, unknown members fall back.
   final results = await client.searchData(
@@ -275,6 +278,81 @@ void main() {
 }
 ''';
 
+// Schema types named like identifiers the generated code relies on.
+const _collideSchema = r'''
+scalar Object
+scalar DateTime
+type Map { key: String! tags: [Object!]! at: [DateTime!]! }
+type Decimal { amount: String! }
+type User { id: ID! }
+union Set = Map | User
+enum Future { NOW LATER }
+input Stream { from: Future }
+type Query {
+  maps(filter: Stream): [Map!]!
+  obj: Object
+  set: [Set!]!
+  when: Future!
+  decimal: Decimal
+}
+type Subscription { ticks: Map! }
+''';
+
+const _collideDocuments = [
+  r'''
+query Everything($s: Stream) {
+  maps(filter: $s) { key tags at }
+  obj
+  set { ... on Map { key } ... on User { id } }
+  when
+  decimal { amount }
+}
+subscription Ticks { ticks { key } }
+''',
+];
+
+const _collideMain = r'''
+import 'package:fgc_compile_check/collide/Everything.g.dart';
+import 'package:fgc_compile_check/collide/types.dart';
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: $message');
+}
+
+void main() {
+  final data = parseEverythingData({
+    'maps': [
+      {
+        '__typename': 'Map',
+        'key': 'k',
+        'tags': ['a', 1],
+        'at': ['2024-01-01T00:00:00Z'],
+      },
+    ],
+    'obj': {'any': 'thing'},
+    'set': [
+      {'__typename': 'Map', 'key': 'm'},
+      {'__typename': 'User', 'id': '1'},
+    ],
+    'when': 'LATER',
+    'decimal': {'__typename': 'Decimal', 'amount': '1.5'},
+  });
+  check(data.maps.single.key == 'k', 'Map_ parsed');
+  check(data.maps.single.tags[1].raw == 1, 'Object_ list parsed');
+  check(data.maps.single.at.single.year == 2024, 'DateTime list parsed');
+  check(data.obj!.raw is Map, 'Object_ scalar keeps the raw JSON');
+  check(data.set[0] is Map_ && data.set[1] is User, 'Set_ dispatch');
+  check(data.when == Future_.LATER, 'Future_ enum parsed');
+  check(data.decimal!.amount == '1.5', 'Decimal_ object parsed');
+  check(Decimal('2.50').value == '2.50', 'built-in Decimal still there');
+  check(EverythingVariables(s: Stream_(from: Future_.NOW))
+          .toJson()['s']['from'] == 'NOW',
+      'Stream_ input serialized');
+  check(possibleTypes['Set']!.contains('Map'), 'GraphQL names in possibleTypes');
+  print('COLLIDE OK');
+}
+''';
+
 void main() {
   test('generated code compiles and works', () async {
     final fixtureDir = p.join('test', 'fixtures');
@@ -295,13 +373,15 @@ void main() {
       ..._generate('smoke', _smokeSchema, _smokeDocuments, strict: true),
       ..._generate('fallback', _smokeSchema, _smokeDocuments,
           strict: true, unknownEnumFallback: true, deprecatedAnnotations: true),
+      ..._generate('collide', _collideSchema, _collideDocuments, strict: true),
       'bin/smoke.dart': _smokeMain,
       'bin/fallback.dart': _fallbackMain,
+      'bin/collide.dart': _collideMain,
     };
 
     final result = await compileGenerated(
       files,
-      runScripts: ['bin/smoke.dart', 'bin/fallback.dart'],
+      runScripts: ['bin/smoke.dart', 'bin/fallback.dart', 'bin/collide.dart'],
       // json_serializable's output uses deprecated members when they are
       // annotated; that trade-off of deprecated_annotations is documented.
       mustBeClean: (path) =>
