@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Generated files are formatted with `dart format` for the language version of
+  your package, so format checks in CI pass without excluding them
+- `types.dart` exports `possibleTypes` for
+  `GraphQLCache(possibleTypes: possibleTypes)`, so fragments on interfaces and
+  unions are matched when reading from the cache
+- Operations are checked against the schema before generation: unknown fields
+  at any depth (`BLD103`, previously root fields only), unknown or missing
+  required arguments (`BLD105`), undeclared, unused or wrongly typed variables
+  (`BLD106`) and missing or unexpected selection sets and invalid fragment
+  types (`BLD107`). All problems are reported together with path and line.
+  `validate_documents: false` turns the checks off
+
+### Fixed
+- Schema types named like identifiers the generated code uses (`Map`,
+  `String`, `Object`, `Future`, `Set`, `JsonKey`, object types named
+  `Decimal`/`Long`/`Byte`, ...) produced code that didn't compile. Their Dart
+  names now get a trailing underscore (`type Map` -> `class Map_`)
+- With `strict_nullability`, non-null lists of custom scalars, `DateTime`,
+  `LocalDate` and `Decimal` (`[JSON!]!`) didn't compile: the list helpers
+  returned nullable lists
+
+### Changed
+- A build now fails for operations the schema rejects (they used to generate
+  code that failed at runtime). Set `validate_documents: false` to keep the old
+  behavior while fixing them
+- Requires `build` 2.4.0 or newer; adds `dart_style` and `pub_semver`
+  dependencies
+
 ## [2.1.0] - 2026-10-17
 
 ### Added
