@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - Unreleased
+
+Results follow the selections of each operation instead of the schema types.
+See [MIGRATION.md](MIGRATION.md) for upgrading; `result_types: schema` keeps
+the 2.x output.
+
+### Breaking changes and migration
+- New option `result_types`, `operation` by default: every selection gets its
+  own class (`GetUser_User`, `GetUser_User_Friends`) with only the selected
+  fields. `parse<Op>Data`, `<op>Data()`, `read<Op>` and the typed options
+  return these classes. Set `result_types: schema` to keep the 2.x classes
+- In operation mode, `types.dart` has no classes for object types,
+  interfaces and unions (and no `Unknown<Name>` fallbacks), and
+  `json_serializable` and `types.g.dart` are no longer used. `json_annotation`
+  is still needed
+- `write<Op>` takes the typed result instead of a raw map in operation mode:
+  `client.writeGetUser(vars, user)`. With `result_types: schema` it still takes
+  the map
+- Input classes are immutable in operation mode: `const` constructor and
+  `final` fields. Use `copyWith` instead of assigning fields
+- With `unknown_enum_fallback`, `$unknown` inside an enum list of an input now
+  throws `ArgumentError` in `toJson()` (operation mode), like a single value
+- Generated code needs Dart language 3.0 or newer (sealed classes, patterns)
+- Removed the helpers deprecated in 2.1: `GraphQLCodeGenerator.generateCode`
+  (use `generateOperationFile`); `OperationAnalyzer.getOperationReturnType`,
+  `getOperationFieldName`, `hasSkipDirective` and `getSkippableFields`;
+  `SchemaAnalyzer.extractCustomScalars`, `getSchemaType`,
+  `mapSchemaTypeToDartType`, `isScalarType` and `mapGraphQLTypeToDartType`
+  (closest: `getDartType`); `TypeGenerator.generateClassForType`,
+  `generateTypeDefinitions` (use `generateTypesFile`) and
+  `getDartTypeFromOriginal`
+
+### Added
+- Selecting `user { id }` works even when `User.name` is non-null in the
+  schema. Aliases become separate fields, fields selected more than once are
+  merged, and fields reached only through `@skip`/`@include` are nullable.
+  `strict_nullability` works as before
+- An operation with several root fields returns `<Op>Result`; with one root
+  field, that field's class
+- Interfaces and unions become sealed classes with an `<Base>_On<Type>`
+  subclass per type with its own fields and `<Base>_Other` for every other
+  type, including types added to the server later, so a `switch` over them is
+  exhaustive
+- Every result class has a `const` constructor, `final` fields, `fromJson`,
+  `toJson` (response shape, `__typename` included), `==`/`hashCode` that
+  compare lists and maps by elements, and a typed `copyWith` that can set
+  nullable fields to `null`. Classes other than the root have `typename`
+- Fragments become `abstract interface class`es in the new `fragments.dart`
+  (exported from `index.dart`), implemented by every class that spreads the
+  fragment unconditionally, with interfaces for nested selections and
+  `<Fragment>_On<Type>` for fragments on interfaces and unions. For each
+  fragment there is also a `<Fragment>Data` class, a `<fragment>Fragment`
+  document and a `<fragment>FragmentName` constant
+- `read<Fragment>Fragment` and `write<Fragment>Fragment` on `GraphQLClient`
+  read and write one object's fragment in the cache
+- Input classes have `==`/`hashCode` (deep for lists) and a typed `copyWith`
+  that can set fields to `null`
+- With `unknown_enum_fallback`, enum fields of result classes and fragment
+  interfaces get a `<field>Raw` sibling; `toJson()` writes it back for
+  `$unknown`
+- One `build_runner build` is enough on a fresh checkout (operation mode)
+
+### Changed
+- `types.dart` declares `graphqlDeepEquals` and `graphqlDeepHash`, also with
+  `result_types: schema`
+- Fragment names must be unique across all documents in operation mode:
+  every document reads every fragment for `fragments.dart`. A fragment named
+  like an enum, input or scalar declaration of `types.dart` gets a trailing
+  underscore. Two fragments that would declare the same class fail with
+  `BLD102`
+
+### Known limitations
+- With `unknown_enum_fallback`, an operation whose single root field is an enum
+  can't be written to the cache while that field is `$unknown`
+
 ## [2.5.0] - 2026-10-21
 
 ### Added
