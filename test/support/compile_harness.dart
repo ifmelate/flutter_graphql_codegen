@@ -33,18 +33,24 @@ Future<CompileResult> compileGenerated(
   final clean = mustBeClean ?? (path) => path.startsWith('lib/');
   final dir = workDir ?? await Directory.systemTemp.createTemp('fgc_compile_');
   final log = StringBuffer();
+  // The package's language version follows the running SDK: json_serializable
+  // 6.10+ (picked on newer SDKs) emits null-aware elements, which need 3.8.
+  final sdk = Platform.version.split(' ').first.split('.');
 
   File(p.join(dir.path, 'pubspec.yaml')).writeAsStringSync('''
 name: fgc_compile_check
 publish_to: none
 environment:
-  sdk: ^3.4.0
+  sdk: ^${sdk[0]}.${sdk[1]}.0
 dependencies:
   graphql: ^5.1.3
   json_annotation: ^4.8.1
 dev_dependencies:
   build_runner: ^2.4.6
   json_serializable: ^6.7.1
+  # source_helper 1.4.0 breaks json_serializable 6.14.1, the newest one for
+  # Dart < 3.12 (constructorByName is defined twice).
+  source_helper: ">=1.3.0 <1.4.0"
 ''');
   File(p.join(dir.path, 'analysis_options.yaml')).writeAsStringSync('');
 
