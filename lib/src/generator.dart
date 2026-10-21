@@ -18,28 +18,6 @@ class GraphQLCodeGenerator {
     return TypeGenerator.generateTypesFile(schema);
   }
 
-  /// Generates code for a GraphQL operation.
-  ///
-  /// Same as [generateOperationFile].
-  @Deprecated('Use generateOperationFile; will be removed in 3.0.')
-  static String generateCode(
-    String schema,
-    String documentContent,
-    String operationName,
-    String operationType,
-    String typesContent, {
-    Map<String, FragmentDefinitionNode> fragments = const {},
-  }) {
-    return generateOperationFile(
-      schema,
-      documentContent,
-      operationName,
-      operationType,
-      typesContent,
-      fragments: fragments,
-    );
-  }
-
   /// Generates an operation file.
   ///
   /// [fragments] supplies fragment definitions that live outside
