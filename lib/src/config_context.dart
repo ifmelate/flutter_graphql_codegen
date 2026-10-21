@@ -15,6 +15,12 @@ class CodegenConfigContext {
   static bool strictScalars = false;
   static bool includeNullInputs = false;
 
+  /// `operation` or `schema`, see `GraphQLCodegenConfig.resultTypes`.
+  static String resultTypes = 'operation';
+
+  /// Whether result classes are generated per operation.
+  static bool get operationResultTypes => resultTypes == 'operation';
+
   /// Resets all fields to defaults. Useful for tests and watch-mode rebuilds.
   static void reset() {
     fileNaming = 'snake_case';
@@ -29,5 +35,6 @@ class CodegenConfigContext {
     scalarConverters = <String, String>{};
     strictScalars = false;
     includeNullInputs = false;
+    resultTypes = 'operation';
   }
 }

@@ -554,6 +554,7 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   CodegenConfigContext.deprecatedAnnotations = cfg.deprecatedAnnotations;
   CodegenConfigContext.includeNullInputs = cfg.includeNullInputs;
   CodegenConfigContext.validateDocuments = cfg.validateDocuments;
+  CodegenConfigContext.resultTypes = cfg.resultTypes;
   CodegenConfigContext.scalarImports = Map.of(cfg.scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(cfg.scalarConverters);
   CodegenConfigContext.strictScalars = cfg.strictScalars;

@@ -291,6 +291,39 @@ class EnumConverter<T> implements JsonConverter<T, String> {
   String toJson(T object) => object.toString().split('.').last;
 }
 
+/// Deep equality for generated classes: lists and maps are compared by their
+/// elements.
+bool graphqlDeepEquals(Object? a, Object? b) {
+  if (identical(a, b)) return true;
+  if (a is List && b is List) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!graphqlDeepEquals(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (a is Map && b is Map) {
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (!b.containsKey(key) || !graphqlDeepEquals(a[key], b[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return a == b;
+}
+
+/// Hash code matching [graphqlDeepEquals].
+int graphqlDeepHash(Object? value) {
+  if (value is List) return Object.hashAll(value.map(graphqlDeepHash));
+  if (value is Map) {
+    return Object.hashAllUnordered(value.entries
+        .map((e) => Object.hash(graphqlDeepHash(e.key), graphqlDeepHash(e.value))));
+  }
+  return value.hashCode;
+}
+
 $scalarConverters
 
 $enumDefinitions
