@@ -130,6 +130,19 @@ class _Run {
     }
     _directives(field.directives);
 
+    // `__typename` is the response key of the type name the generated code
+    // (and the cache) relies on; other `__` names belong to introspection.
+    final alias = field.alias?.value;
+    if (alias != null && alias.startsWith('__') && alias != name) {
+      _report(
+          CodegenErrorCodes.buildInvalidSelection,
+          'Alias "$alias" is not allowed: aliases starting with "__" are '
+          'reserved; rename it',
+          field,
+          fieldPath,
+          fragment);
+    }
+
     final parentName = parent.name.value;
     if (name == '__typename') {
       if (field.selectionSet != null) {

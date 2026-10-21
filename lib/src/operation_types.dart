@@ -797,6 +797,19 @@ class _Builder {
     for (final MapEntry(:key, value: occs) in occurrences.entries) {
       final first = occs.first;
       final fieldName = first.node.name.value;
+      // The document validator reports this too; this guards
+      // `validate_documents: false`, where it would clash with `typename`.
+      final aliased = key == '__typename'
+          ? occs.map((o) => o.node.name.value).where((n) => n != key)
+          : const <String>[];
+      if (aliased.firstOrNull case final other?) {
+        throw CodegenException(
+          CodegenErrorCodes.buildInvalidSelection,
+          'Alias "__typename" on field "$other" is not allowed (in '
+          '${shape.label}): "__typename" is reserved for the type name; '
+          'rename the alias',
+        );
+      }
       if (fieldName == '__typename' && (!typename || key == '__typename')) {
         continue;
       }

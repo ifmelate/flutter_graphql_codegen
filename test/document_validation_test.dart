@@ -192,6 +192,53 @@ fragment Bits on User { avatar(size: $size) }
     });
   });
 
+  group('reserved aliases', () {
+    test('aliases starting with __ are reported', () {
+      expect(
+        _generate('query Q { me { docs: posts { __typename: title } } }'),
+        _problem('BLD107', ['"__typename"', 'reserved', 'me.docs.__typename']),
+      );
+      expect(
+        _generate('query Q { __meta: me { id } }'),
+        _problem('BLD107', ['"__meta"', 'reserved']),
+      );
+      expect(
+        _generate('query Q { me { ...Bits } }\n'
+            'fragment Bits on User { __typename: name }'),
+        _problem('BLD107', ['"__typename"', 'fragment Bits']),
+      );
+    });
+
+    test('__typename aliased to itself is fine', () {
+      expect(_generate('query Q { me { __typename: __typename id } }'), isNull);
+    });
+
+    test('with validate_documents: false generation still fails clearly', () {
+      CodegenConfigContext.validateDocuments = false;
+      Matcher reserved(List<String> parts) => allOf(
+          isA<CodegenException>().having((e) => e.code, 'code', 'BLD107'),
+          _problem('', ['"__typename"', 'reserved', ...parts]));
+      expect(
+        _generate('query Q { me { docs: posts { __typename: title } } }'),
+        reserved(['"title"', 'Q.me.docs']),
+      );
+      // At the root too (cache writes add __typename there).
+      expect(
+        _generate('query Q { __typename: me { id } }'),
+        reserved(['"me"']),
+      );
+      // And in fragments.dart.
+      expect(
+        () => GraphQLCodeGenerator.generateFragmentsFile(
+            _schema,
+            DocumentUtils.collectFragments([
+              gql_lang.parseString('fragment Bits on User { __typename: name }')
+            ])),
+        throwsA(reserved(['"name"', 'Bits'])),
+      );
+    });
+  });
+
   test('all problems of a document are reported together', () {
     final error = _generate(r'query Q($x: Int) { me { nope avatar } }');
     expect(error, _problem('BLD103', ['nope']));
