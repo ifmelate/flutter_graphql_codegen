@@ -827,7 +827,7 @@ ${mapped ? "import 'package:fgc_compile_check/scalars/money.dart';" : ''}
 const nulls = $nulls;
 const fallback = $fallback;
 const mapped = $mapped;
-''' +
+'''
     r'''
 
 void check(bool condition, String message) {
@@ -950,9 +950,14 @@ void main() {
     error = e;
   }
   check((error == null) == fallback, 'unknown enum values');
-''' +
-    (fallback
-        ? r'''
+'''
+    '${fallback ? _opTypesFallbackChecks : ''}'
+    '''
+  print('OP TYPES $dir OK');
+}
+''';
+
+const _opTypesFallbackChecks = r'''
   final unknown = ProductFilter.fromJson(
       {'name': 'n', 'status': 'NEW', 'statuses': ['NEW', 'ACTIVE']});
   check(unknown.status == Status.$unknown, r'unknown value is $unknown');
@@ -963,11 +968,6 @@ void main() {
   } on ArgumentError {
     // expected
   }
-'''
-        : '') +
-    '''
-  print('OP TYPES $dir OK');
-}
 ''';
 
 void main() {
