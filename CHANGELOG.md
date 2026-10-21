@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] - 2026-10-22
+
+Fixes found by running generated code against public GraphQL APIs.
+
+### Fixed
+- A variable with a default value that isn't given is now sent with that
+  default instead of being left out. The server applied the default anyway,
+  but the normalized cache didn't: with `@include`/`@skip` on such a variable
+  the query failed with `PartialDataException`, and `read<Op>` missed results
+  cached under the same variables
+- A nullable list field of an input class now defaults to `null` (left out)
+  instead of `[]`, in both result type modes. Filters like
+  `{code: {eq: "DE"}}` were sent as `{eq: "DE", in: [], nin: []}`, which
+  servers read as "none of these" and returned nothing. Non-null lists still
+  default to `[]`
+- A schema type named `Duration` no longer hides `dart:core`'s `Duration`
+  used by `pollInterval`; it gets a trailing underscore like other reserved
+  names
+
 ## [3.0.0] - 2026-10-21
 
 Results follow the selections of each operation instead of the schema types.
