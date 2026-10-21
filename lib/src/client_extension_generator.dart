@@ -331,8 +331,7 @@ ${request(writeIdFields)},
           dartName: dartFieldName(d.variable.name.value, className: className),
           type: d.type,
           optional: !d.type.isNonNull || d.defaultValue?.value != null,
-          // An explicit null would override the default on the server.
-          hasDefault: d.defaultValue?.value != null,
+          defaultValue: d.defaultValue?.value,
         ),
     ];
 
@@ -357,7 +356,17 @@ ${request(writeIdFields)},
       if (f.optional) {
         var expr = JsonExprs.toJsonExpr(f.type, '${f.dartName}!');
         if (expr == '${f.dartName}!') expr = f.dartName;
-        if (CodegenConfigContext.includeNullInputs && !f.hasDefault) {
+        final defaultValue = f.defaultValue;
+        if (defaultValue != null) {
+          // The default is sent explicitly: the server would apply it anyway,
+          // but the normalized cache doesn't, and @include/@skip on a missing
+          // variable would make it expect fields the server left out.
+          final literal = _valueLiteral(defaultValue);
+          buffer.writeln(expr == f.dartName
+              ? "        '${f.graphqlName}': ${f.dartName} ?? $literal,"
+              : "        '${f.graphqlName}': ${f.dartName} == null "
+                  '? $literal : $expr,');
+        } else if (CodegenConfigContext.includeNullInputs) {
           final value = expr == f.dartName
               ? expr
               : '${f.dartName} == null ? null : $expr';
@@ -376,6 +385,30 @@ ${request(writeIdFields)},
       ..writeln('}');
     return buffer.toString();
   }
+
+  /// Dart expression for the JSON form of a GraphQL constant [value] (a
+  /// variable's default value).
+  static String _valueLiteral(ValueNode value) => switch (value) {
+        IntValueNode(:final value) => value,
+        FloatValueNode(:final value) => value,
+        BooleanValueNode(:final value) => '$value',
+        NullValueNode() => 'null',
+        StringValueNode(:final value) => _stringLiteral(value),
+        EnumValueNode(:final name) => _stringLiteral(name.value),
+        ListValueNode(:final values) =>
+          '<dynamic>[${values.map(_valueLiteral).join(', ')}]',
+        ObjectValueNode(:final fields) => '<String, dynamic>{${fields.map(
+              (f) => '${_stringLiteral(f.name.value)}: '
+                  '${_valueLiteral(f.value)}',
+            ).join(', ')}}',
+        _ => throw CodegenException(
+            CodegenErrorCodes.buildOperationParse,
+            'Unsupported default value: ${gql_lang.printNode(value)}',
+          ),
+      };
+
+  static String _stringLiteral(String s) =>
+      "'${s.replaceAll(r'\', r'\\').replaceAll("'", r"\'").replaceAll(r'$', r'\$').replaceAll('\n', r'\n')}'";
 
   // ---------------------------------------------------------------------------
   // Response parsing

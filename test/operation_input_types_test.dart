@@ -83,7 +83,9 @@ void main() {
     expect(types, contains('  const UserFilter({'));
     expect(types, contains('    required this.role,'));
     expect(types, contains('    this.name,'));
-    expect(types, contains('    this.roles = const [],'));
+    // A nullable list stays null: `[]` would mean "none of these".
+    expect(types, contains('    this.roles,'));
+    expect(types, isNot(contains('    this.roles = const [],')));
     expect(types, contains('  factory UserFilter.fromJson('));
     expect(types, contains('  Map<String, dynamic> toJson() => {'));
   });

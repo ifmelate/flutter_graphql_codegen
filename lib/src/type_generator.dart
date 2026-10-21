@@ -674,6 +674,7 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
       // With include_null_inputs a null field is sent as null, so the server
       // can tell "clear it" from "leave it".
       includeIfNull: CodegenConfigContext.includeNullInputs,
+      isInput: true,
     );
   }
 
@@ -722,7 +723,9 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
     buffer.writeln();
     buffer.writeln('  const $className({');
     for (final f in fields) {
-      if (f.type.startsWith('List<')) {
+      // A nullable list stays null when not given: an empty list sent to the
+      // server means "none of these", not "no filter".
+      if (f.type.startsWith('List<') && f.node.type.isNonNull) {
         buffer.writeln('    this.${f.name} = const [],');
       } else if (f.type.endsWith('?') || f.type == 'dynamic') {
         buffer.writeln('    this.${f.name},');
@@ -739,8 +742,8 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
     for (final f in fields) {
       final v = "json['${f.key}']";
       final type = f.node.type;
-      // Like json_serializable's `defaultValue`, a missing list is empty.
-      final expr = type is ListTypeNode
+      // A missing non-null list is empty, a missing nullable one null.
+      final expr = type is ListTypeNode && type.isNonNull
           ? '$v == null ? const <${_listElementType(f.type)}>[] : '
               '${_inputFromJson(type, v, nullable: false)}'
           : _inputFromJson(type, v, parenthesize: false);
@@ -992,6 +995,7 @@ class $unknownName implements $name {
     Set<String> overriddenFields = const {},
     String? fieldNameClassName,
     bool includeIfNull = false,
+    bool isInput = false,
     bool rawEnumFields = false,
   }) {
     final buffer = StringBuffer();
@@ -1030,8 +1034,9 @@ class $unknownName implements $name {
       final dartName =
           dartFieldName(field.name, className: fieldNameClassName ?? className);
       final fieldType = SchemaAnalyzer.getDartType(field.type);
-      if (fieldType.startsWith('List<')) {
-        // For list fields, provide empty list as default
+      // Lists default to empty, except nullable input lists: an empty list
+      // sent to the server means "none of these", not "no filter".
+      if (fieldType.startsWith('List<') && (!isInput || field.type.isNonNull)) {
         buffer.writeln('    this.$dartName = const [],');
       } else if (fieldType.endsWith('?')) {
         buffer.writeln('    this.$dartName,');
