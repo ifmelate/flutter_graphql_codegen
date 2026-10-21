@@ -83,7 +83,9 @@ void main() {
     expect(types, contains('  const UserFilter({'));
     expect(types, contains('    required this.role,'));
     expect(types, contains('    this.name,'));
-    expect(types, contains('    this.roles = const [],'));
+    // A nullable list stays null: `[]` would mean "none of these".
+    expect(types, contains('    this.roles,'));
+    expect(types, isNot(contains('    this.roles = const [],')));
     expect(types, contains('  factory UserFilter.fromJson('));
     expect(types, contains('  Map<String, dynamic> toJson() => {'));
   });
@@ -145,7 +147,8 @@ void main() {
       expect(types, contains('    List<Role>? roles,\n'));
       expect(types, contains('  }) = UserFilter._withNulls;'));
       expect(types, contains('    Object? name = _undefined,'));
-      expect(types, contains('    Object? roles = const <Role>[],'));
+      // A nullable list not given is absent, like any nullable field.
+      expect(types, contains('    Object? roles = _undefined,'));
       expect(
           types,
           contains('name = identical(name, _undefined) ? null : '

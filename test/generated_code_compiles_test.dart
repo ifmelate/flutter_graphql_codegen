@@ -643,7 +643,7 @@ Future<void> main() async {
 ''';
 
 // include_null_inputs: null input fields and variables are sent as null,
-// except variables with a default value (null would override it).
+// except variables with a default value, which are sent with the default.
 const _nullsSchema = r'''
 input Patch { name: String, note: String }
 type Query { ok: Boolean }
@@ -674,7 +674,7 @@ void main() {
   check(patch['name'] == 'x', 'set field sent');
   check(patch.containsKey('note') == $sendsNulls, 'null input field');
   check(vars.containsKey('tag') == $sendsNulls, 'null variable');
-  check(!vars.containsKey('limit'), 'variable with a default is omitted');
+  check(vars['limit'] == 5, 'variable with a default is sent with it');
   check(UpdateVariables(id: '1', patch: Patch(), limit: 3).toJson()['limit'] == 3,
       'variable with a default is sent when set');
   print('NULLS OK');
@@ -903,13 +903,14 @@ void main() {
   check(json.containsKey('old') == nulls, 'unset field');
   check(json.keys.length == (nulls ? 23 : 22), 'all fields written');
 
-  // Unset optional fields: left out unless include_null_inputs; lists
-  // default to empty as in json_serializable classes.
+  // Unset optional fields: left out unless include_null_inputs. A non-null
+  // list defaults to empty, a nullable one to null (`[]` would mean "none").
   final empty = const ProductFilter(name: 'n').toJson();
   check(empty.containsKey('int') == nulls && empty.containsKey('page') == nulls,
       'null fields');
-  check(graphqlDeepEquals(empty['tags'], []) && graphqlDeepEquals(empty['pages'], []),
-      'lists default to empty');
+  check(graphqlDeepEquals(empty['tags'], []), 'non-null list defaults to empty');
+  check(empty.containsKey('pages') == nulls && empty['pages'] == null,
+      'nullable list defaults to null');
   if (nulls) check(empty['int'] == null, 'null written as null');
 
   // fromJson round trip.

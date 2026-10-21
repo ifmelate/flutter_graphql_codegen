@@ -701,6 +701,7 @@ class ${enumName}Converter extends JsonConverter<$type, String> {
       // With include_null_inputs a null field is sent as null, so the server
       // can tell "clear it" from "leave it".
       includeIfNull: CodegenConfigContext.includeNullInputs,
+      isInput: true,
     );
   }
 
@@ -756,8 +757,12 @@ class ${enumName}Converter extends JsonConverter<$type, String> {
     ];
     String flag(String name) => '_${name}IsNull';
     String cast(String v, String type) => type == 'dynamic' ? v : '$v as $type';
-    String constructorParam(String name, String type) {
-      if (type.startsWith('List<')) return 'this.$name = const []';
+    // A nullable list stays null when not given: an empty list sent to the
+    // server means "none of these", not "no filter".
+    String constructorParam(String name, String type, TypeNode graphqlType) {
+      if (type.startsWith('List<') && graphqlType.isNonNull) {
+        return 'this.$name = const []';
+      }
       if (type.endsWith('?') || type == 'dynamic') return 'this.$name';
       return 'required this.$name';
     }
@@ -782,7 +787,7 @@ class ${enumName}Converter extends JsonConverter<$type, String> {
     buffer.writeln();
     buffer.writeln('  const $className({');
     for (final f in fields) {
-      buffer.writeln('    ${constructorParam(f.name, f.type)},');
+      buffer.writeln('    ${constructorParam(f.name, f.type, f.node.type)},');
     }
     if (flags) {
       final inits = [for (final f in flaggedFields) '${flag(f.name)} = false'];
@@ -813,11 +818,11 @@ class ${enumName}Converter extends JsonConverter<$type, String> {
     if (flags) {
       buffer.writeln('  const $className._withNulls({');
       for (final f in fields) {
+        // Flagged fields are of a nullable GraphQL type: not given means
+        // absent, also for lists.
         if (!flaggedNames.contains(f.name)) {
-          buffer.writeln('    ${constructorParam(f.name, f.type)},');
-        } else if (f.type.startsWith('List<')) {
-          buffer.writeln('    Object? ${f.name} = '
-              'const <${_listElementType(f.type)}>[],');
+          buffer
+              .writeln('    ${constructorParam(f.name, f.type, f.node.type)},');
         } else {
           buffer.writeln('    Object? ${f.name} = _undefined,');
         }
@@ -842,13 +847,10 @@ class ${enumName}Converter extends JsonConverter<$type, String> {
       final String expr;
       if (flaggedNames.contains(f.name)) {
         // A key with null is an explicit null; a missing one is left out.
-        final missing = type is ListTypeNode
-            ? 'const <${_listElementType(f.type)}>[]'
-            : '_undefined';
         expr = "json.containsKey('${f.key}') ? "
-            '${_inputFromJson(type, v, nullable: true)} : $missing';
-      } else if (type is ListTypeNode) {
-        // Like json_serializable's `defaultValue`, a missing list is empty.
+            '${_inputFromJson(type, v, nullable: true)} : _undefined';
+      } else if (type is ListTypeNode && type.isNonNull) {
+        // A missing non-null list is empty, a missing nullable one null.
         expr = '$v == null ? const <${_listElementType(f.type)}>[] : '
             '${_inputFromJson(type, v, nullable: false)}';
       } else {
@@ -1121,6 +1123,7 @@ class $unknownName implements $name {
     Set<String> overriddenFields = const {},
     String? fieldNameClassName,
     bool includeIfNull = false,
+    bool isInput = false,
     bool rawEnumFields = false,
   }) {
     final buffer = StringBuffer();
@@ -1159,8 +1162,9 @@ class $unknownName implements $name {
       final dartName =
           dartFieldName(field.name, className: fieldNameClassName ?? className);
       final fieldType = SchemaAnalyzer.getDartType(field.type);
-      if (fieldType.startsWith('List<')) {
-        // For list fields, provide empty list as default
+      // Lists default to empty, except nullable input lists: an empty list
+      // sent to the server means "none of these", not "no filter".
+      if (fieldType.startsWith('List<') && (!isInput || field.type.isNonNull)) {
         buffer.writeln('    this.$dartName = const [],');
       } else if (fieldType.endsWith('?')) {
         buffer.writeln('    this.$dartName,');

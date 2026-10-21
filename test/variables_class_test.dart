@@ -59,9 +59,15 @@ void main() {
   test('toJson sends an explicit null, leaves out absent variables', () {
     expect(
         code,
-        contains("        if (first != null) 'first': first "
-            "else if (_firstIsNull) 'first': null,"));
-    expect(code, contains("        if (limit != null) 'limit': limit,"));
+        contains("        if (tags != null) 'tags': tags "
+            "else if (_tagsIsNull) 'tags': null,"));
+  });
+
+  test('toJson sends the default of an absent variable', () {
+    // An explicit null still replaces the default.
+    expect(code,
+        contains("        'first': first ?? (_firstIsNull ? null : 10),"));
+    expect(code, contains("        'limit': limit ?? 3,"));
   });
 
   test('== and hashCode, deep for lists, with the flags', () {
