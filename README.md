@@ -34,7 +34,7 @@ dependencies:
   json_annotation: ^4.8.1
 
 dev_dependencies:
-  flutter_graphql_codegen: ^2.4.1
+  flutter_graphql_codegen: ^2.5.0
   build_runner: ^2.4.6
   json_serializable: ^6.7.1
 ```
@@ -125,6 +125,7 @@ and 64 on wrong usage, so it works in scripts and CI.
 | `diagnostics_format` | `plain` | `plain` or `json` error output |
 | `unknown_enum_fallback` | `false` | Add a `$unknown` value to every enum instead of throwing on values the server added later (see below) |
 | `deprecated_annotations` | `false` | Turn schema `@deprecated` into Dart `@Deprecated` (see below) |
+| `include_null_inputs` | `false` | Send a null input field or variable as `null` instead of leaving it out (see below) |
 | `validate_documents` | `true` | Check operations against the schema before generating (see [Errors](#errors)) |
 | `strict_scalars` | `false` | Fail when a custom scalar has no `scalar_mapping` entry (see [Custom scalars](#custom-scalars)) |
 | `schema_endpoint` | none | Where `fetch_schema` downloads the schema from (see above) |
@@ -141,8 +142,18 @@ know (the server added it after you generated the code) throws while parsing.
 That is risky for mobile apps, where old versions stay installed for a long
 time. With the option on, every enum gets an extra `$unknown` value, and unknown
 values parse to it, also inside lists. Sending `$unknown` back to the server
-throws `ArgumentError`. It's off by default because the extra value makes your
+throws `ArgumentError`. Each enum field of an object type also gets a
+`<field>Raw` sibling with the string the server sent (`user.role` is
+`Role.$unknown`, `user.roleRaw` is `'OWNER'`), so you can still show or log it;
+lists get `List<String?>?`. Raw values are never sent back. It's off by default because the extra value makes your
 existing exhaustive `switch` statements over enums incomplete.
+
+About `include_null_inputs`: by default a null field of an input type, or a null
+optional variable, is left out of the request. For a server that means "not
+set", so you can't clear a field. With the option on, it is sent as `null`.
+Variables with a default value (`$first: Int = 10`) are still left out when
+null, because an explicit `null` would replace the default. This matches
+`includeIfNull` in Artemis, if you are moving from there.
 
 About `deprecated_annotations`: descriptions from the schema always become doc
 comments, and a `@deprecated` field or enum value gets a `Deprecated: <reason>`
@@ -203,6 +214,7 @@ extension GetUserExtension on graphql.GraphQLClient {
   Future<User?> getUserData([Map<String, dynamic>? variables]);
   User? readGetUser(GetUserVariables variables);              // from the cache
   void writeGetUser(GetUserVariables variables, Map<String, dynamic> data);
+  bool evictGetUser(GetUserVariables variables);              // drop from the cache
 }
 ```
 
@@ -256,6 +268,13 @@ it isn't cached, and `write<Operation>` puts data into the cache. Write data in
 the shape the server returns, with `__typename` on every object including the
 root.
 
+`evict<Operation>` removes the query's cached root fields for those variables,
+so the next `cacheFirst` read goes to the network (after a mutation that made
+the result stale, for example). It returns whether anything was removed. Other
+variables of the same query and the objects the result pointed to stay cached.
+Active `watchQuery` results aren't notified; call `refetch()` on them if you
+need fresh data right away.
+
 ### Variables
 
 `GetUserVariables` turns typed values into the map that `package:graphql` expects.
@@ -305,6 +324,10 @@ underscore in Dart (`class_`, `Role.default_`), and so does a field named like a
 type (`int`, `String`, `Media: Media` -> `int_`, `String_`, `Media_`). Leading
 underscores would make a name private, so they move to the end: `_id` becomes
 `id_`. JSON keys and values sent to the server keep the original GraphQL names.
+
+Client methods of an operation named like a `GraphQLClient` member get one too:
+`query Query` gives `client.query_()`, `client.readQuery_()` and
+`client.writeQuery_()` (and `client.queryData()`, which doesn't clash).
 
 The same goes for schema types named like something the generated code relies
 on: `dart:core` types (`Map`, `String`, `Object`, `Future`, `Set`, ...),
@@ -384,6 +407,7 @@ Problems found during generation are reported with a code:
 | `CFG999` | Other config problem (bad value, unset env variable in `schema_headers`) |
 | `SCH400` | The schema doesn't parse |
 | `SCH401` | A custom scalar has no `scalar_mapping` entry and `strict_scalars` is on |
+| `SCH402` | The schema has types the spec doesn't allow: an object, interface or input type without fields, a union without members, an enum without values, an interface implemented twice |
 | `SCH404` | Schema file not found |
 | `SCH500` | Remote schema download failed; the message lists every attempt |
 | `BLD100` | An operation file doesn't parse |
@@ -409,7 +433,7 @@ your query selects. If `User.name` is `String!` in the schema and a query asks
 for `user { id }` only, parsing that `User` throws because `name` is missing.
 For now, select every non-nullable field of the object types you fetch.
 Per-query result types would fix this properly, but they'd change the generated
-API, so they're planned for a major release.
+API, so they're planned for 3.0 (see [ROADMAP.md](ROADMAP.md)).
 
 Other limitations:
 

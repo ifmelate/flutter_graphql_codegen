@@ -13,6 +13,7 @@ class CodegenConfigContext {
   static Map<String, String> scalarImports = <String, String>{};
   static Map<String, String> scalarConverters = <String, String>{};
   static bool strictScalars = false;
+  static bool includeNullInputs = false;
 
   /// Resets all fields to defaults. Useful for tests and watch-mode rebuilds.
   static void reset() {
@@ -27,5 +28,6 @@ class CodegenConfigContext {
     scalarImports = <String, String>{};
     scalarConverters = <String, String>{};
     strictScalars = false;
+    includeNullInputs = false;
   }
 }

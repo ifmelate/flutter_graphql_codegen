@@ -41,9 +41,10 @@ class ClientExtensionGenerator {
     );
     return '''${CodeGenerationConstants.generatedFileWarning}
 // Operation: $operationName (${operation.type.name})
-${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}${scalarImports.isEmpty ? '' : ', unused_import'}
+${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, unused_import
 
 import 'package:graphql/client.dart' as graphql;
+import 'package:normalize/utils.dart' as normalize;
 import 'types.dart';
 $scalarImports
 $body''';
@@ -147,6 +148,8 @@ $body''';
           dartName: dartFieldName(d.variable.name.value, className: className),
           type: d.type,
           optional: !d.type.isNonNull || d.defaultValue?.value != null,
+          // An explicit null would override the default on the server.
+          hasDefault: d.defaultValue?.value != null,
         ),
     ];
 
@@ -171,8 +174,15 @@ $body''';
       if (f.optional) {
         var expr = _toJsonExpr(f.type, '${f.dartName}!');
         if (expr == '${f.dartName}!') expr = f.dartName;
-        buffer.writeln("        if (${f.dartName} != null) "
-            "'${f.graphqlName}': $expr,");
+        if (CodegenConfigContext.includeNullInputs && !f.hasDefault) {
+          final value = expr == f.dartName
+              ? expr
+              : '${f.dartName} == null ? null : $expr';
+          buffer.writeln("        '${f.graphqlName}': $value,");
+        } else {
+          buffer.writeln("        if (${f.dartName} != null) "
+              "'${f.graphqlName}': $expr,");
+        }
       } else {
         buffer.writeln("        '${f.graphqlName}': "
             "${_toJsonExpr(f.type, f.dartName)},");
@@ -312,6 +322,8 @@ $body''';
 
   static String _generateExtension(_OperationContext ctx) {
     final camel = ctx.camel;
+    final run = _extensionMember(camel);
+    final runData = _extensionMember('${camel}Data');
     final parse = 'parse${ctx.pascal}Data';
     final kind = ctx.operation.type;
     const vars = '[Map<String, dynamic>? variables]';
@@ -327,8 +339,8 @@ extension ${ctx.name}Extension on graphql.GraphQLClient {
   /// Subscribes to `${ctx.name}` and emits raw results.
   ///
   /// Results with errors are emitted as [graphql.OperationException] errors.
-  Stream<$resultType> $camel($vars) {
-    return subscribe(
+  Stream<$resultType> $run($vars) {
+    return this.subscribe(
       graphql.SubscriptionOptions<Map<String, dynamic>>(
 $options
       ),
@@ -341,8 +353,8 @@ $options
   }
 
   /// Subscribes to `${ctx.name}` and emits typed data.
-  Stream<${ctx.returnType}> ${camel}Data($vars) {
-    return $camel(variables)
+  Stream<${ctx.returnType}> $runData($vars) {
+    return $run(variables)
         .where((result) => !(result.isLoading && result.data == null))
         .map((result) => $parse(result.data));
   }
@@ -358,8 +370,8 @@ extension ${ctx.name}Extension on graphql.GraphQLClient {
   /// Executes `${ctx.name}` and returns the raw result.
   ///
   /// Throws [graphql.OperationException] when the result has errors.
-  Future<$resultType> $camel($vars) async {
-    final result = await $method(
+  Future<$resultType> $run($vars) async {
+    final result = await this.$method(
       graphql.$optionsType<Map<String, dynamic>>(
 $options
       ),
@@ -371,13 +383,26 @@ $options
   }
 
   /// Executes `${ctx.name}` and returns typed data.
-  Future<${ctx.returnType}> ${camel}Data($vars) async {
-    final result = await $camel(variables);
+  Future<${ctx.returnType}> $runData($vars) async {
+    final result = await $run(variables);
     return $parse(result.data);
   }
 ${isMutation ? '' : _generateCacheHelpers(ctx)}}
 ''';
   }
+
+  /// Members of `GraphQLClient` (and `Object`). An extension method with one of
+  /// these names would never be called: the client's own member wins. So such
+  /// names get a trailing underscore (operation `Query` -> `client.query_()`).
+  static const _clientMemberNames = {
+    'cache', 'copyWith', 'defaultPolicies', 'fetchMore', 'link', 'mutate', //
+    'query', 'queryManager', 'readFragment', 'readQuery', 'resetStore',
+    'subscribe', 'watchMutation', 'watchQuery', 'writeFragment', 'writeQuery',
+    'hashCode', 'noSuchMethod', 'runtimeType', 'toString',
+  };
+
+  static String _extensionMember(String name) =>
+      _clientMemberNames.contains(name) ? '${name}_' : name;
 
   // ---------------------------------------------------------------------------
   // Typed options and cache helpers
@@ -482,38 +507,75 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
     final t =
         ctx.returnType.endsWith('?') ? ctx.returnType : '${ctx.returnType}?';
     final options = '${ctx.camel}QueryOptions';
-    final (readParams, writeParams, args) = switch (ctx.variablesKind) {
+    final (readParams, writeParams, evictParams, args) =
+        switch (ctx.variablesKind) {
       _VariablesKind.required => (
           '$vars variables, {bool optimistic = true}',
           '$vars variables, Map<String, dynamic> data, '
               '{bool broadcast = true}',
+          '$vars variables',
           'variables',
         ),
       _VariablesKind.optional => (
           '{$vars? variables, bool optimistic = true}',
           'Map<String, dynamic> data, '
               '{$vars? variables, bool broadcast = true}',
+          '{$vars? variables}',
           'variables: variables',
         ),
       _VariablesKind.none => (
           '{bool optimistic = true}',
           'Map<String, dynamic> data, {bool broadcast = true}',
           '',
+          '',
         ),
     };
     return '''
 
   /// Reads `${ctx.name}` from the cache; null when it isn't cached.
-  $t read${ctx.pascal}($readParams) {
+  $t ${_extensionMember('read${ctx.pascal}')}($readParams) {
     final Map<String, dynamic>? data =
-        readQuery($options($args).asRequest, optimistic: optimistic);
+        this.readQuery($options($args).asRequest, optimistic: optimistic);
     return data == null ? null : parse${ctx.pascal}Data(data);
   }
 
   /// Writes raw `data` for `${ctx.name}` into the cache, shaped as the server
   /// returns it, including `__typename` on every object (also the root).
-  void write${ctx.pascal}($writeParams) {
-    writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
+  void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
+    this.writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
+  }
+
+  /// Removes the cached root fields of `${ctx.name}` for these variables, so
+  /// the next `cacheFirst` read fetches it again. Returns whether anything was
+  /// removed. Objects it pointed to stay cached, and active `watchQuery`
+  /// results are not notified; call `refetch()` on them if needed.
+  bool ${_extensionMember('evict${ctx.pascal}')}($evictParams) {
+    final request = $options($args).asRequest;
+    final document = request.operation.document;
+    final rootId = normalize.resolveRootTypename(
+        normalize.getOperationDefinition(
+            document, request.operation.operationName),
+        this.cache.typePolicies);
+    final root = this.cache.readNormalized(rootId, optimistic: false);
+    if (root == null) return false;
+    final keys = normalize.operationFieldNames(
+        document,
+        request.operation.operationName ?? '',
+        request.variables,
+        this.cache.typePolicies,
+        this.cache.possibleTypes);
+    final rest = Map<String, dynamic>.of(root);
+    var removed = false;
+    for (final key in keys) {
+      // Shared by every query on this root; reads need it.
+      if (key == '__typename') continue;
+      if (rest.containsKey(key)) {
+        rest.remove(key);
+        removed = true;
+      }
+    }
+    if (removed) this.cache.writeNormalized(rootId, rest);
+    return removed;
   }
 ''';
   }
@@ -728,6 +790,17 @@ class _OperationContext {
   _RootField _rootField(FieldNode sel, ObjectTypeDefinitionNode rootType,
       Set<String> definedTypes) {
     final fieldName = sel.name.value;
+    // Introspection fields: their types aren't in the SDL, so the result is
+    // the raw JSON.
+    if (fieldName == '__schema' || fieldName == '__type') {
+      final responseKey = sel.alias?.value ?? fieldName;
+      return _RootField(
+        responseKey,
+        dartFieldName(responseKey, className: resultClassName),
+        'Map<String, dynamic>?',
+        (v) => '$v as Map<String, dynamic>?',
+      );
+    }
     final schemaField =
         rootType.fields.where((f) => f.name.value == fieldName).firstOrNull;
     if (schemaField == null) {

@@ -42,6 +42,8 @@ const Set<String> dartReservedWords = {
 const Set<String> reservedTypeNames = {
   'Map', 'List', 'Set', 'String', 'Object', 'int', 'double', 'num', 'bool', //
   'dynamic', 'DateTime', 'Future', 'Stream', 'ArgumentError', 'StateError',
+  // `enum Enum` would also get a converter named like the built-in one.
+  'Enum',
   'Deprecated', 'override', 'JsonConverter', 'JsonSerializable', 'JsonKey',
   'JsonValue', 'FieldRename', 'Decimal', 'Long', 'Byte', 'EnumConverter',
   'DecimalConverter', 'DateTimeConverter', 'LocalDateConverter',

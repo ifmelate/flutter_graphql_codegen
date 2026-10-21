@@ -28,6 +28,7 @@ Map<String, String> _generate(
   required bool strict,
   bool unknownEnumFallback = false,
   bool deprecatedAnnotations = false,
+  bool includeNullInputs = false,
   Map<String, String> scalarMapping = const {},
   Map<String, String> scalarImports = const {},
   Map<String, String> scalarConverters = const {},
@@ -36,6 +37,7 @@ Map<String, String> _generate(
   CodegenConfigContext.strictNullability = strict;
   CodegenConfigContext.unknownEnumFallback = unknownEnumFallback;
   CodegenConfigContext.deprecatedAnnotations = deprecatedAnnotations;
+  CodegenConfigContext.includeNullInputs = includeNullInputs;
   CodegenConfigContext.scalarMapping = Map.of(scalarMapping);
   CodegenConfigContext.scalarImports = Map.of(scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(scalarConverters);
@@ -296,6 +298,13 @@ void main() {
   check(user.roles[1] == Role.$unknown, 'unknown value in list');
   // ignore: deprecated_member_use_from_same_package
   check(user.roles[2] == Role.default_, 'escaped value in list');
+  check(user.roleRaw == 'OWNER', 'raw value next to \$unknown');
+  check(user.rolesRaw![1] == 'OWNER' && user.rolesRaw![2] == 'default',
+      'raw values of a list');
+  final known = User.fromJson(
+      {'id': '2', 'name': 'Bob', 'role': 'ADMIN', 'roles': ['ADMIN']}).toJson();
+  check(known['role'] == 'ADMIN' && known.keys.every((k) => !k.contains('#')),
+      'raw values are not sent back');
   check(UserFilter(role: Role.ADMIN).toJson()['role'] == 'ADMIN',
       'known value serialized');
   try {
@@ -317,6 +326,7 @@ type Decimal { amount: String! }
 type User { id: ID! }
 union Set = Map | User
 enum Future { NOW LATER }
+enum Enum { A B }
 input Stream { from: Future }
 type Query {
   maps(filter: Stream): [Map!]!
@@ -324,6 +334,7 @@ type Query {
   set: [Set!]!
   when: Future!
   decimal: Decimal
+  kind: Enum
 }
 type Subscription { ticks: Map! }
 ''';
@@ -336,6 +347,7 @@ query Everything($s: Stream) {
   set { ... on Map { key } ... on User { id } }
   when
   decimal { amount }
+  kind
 }
 subscription Ticks { ticks { key } }
 ''',
@@ -366,6 +378,7 @@ void main() {
     ],
     'when': 'LATER',
     'decimal': {'__typename': 'Decimal', 'amount': '1.5'},
+    'kind': 'B',
   });
   check(data.maps.single.key == 'k', 'Map_ parsed');
   check(data.maps.single.tags[1].raw == 1, 'Object_ list parsed');
@@ -375,6 +388,7 @@ void main() {
   check(data.when == Future_.LATER, 'Future_ enum parsed');
   check(data.decimal!.amount == '1.5', 'Decimal_ object parsed');
   check(Decimal('2.50').value == '2.50', 'built-in Decimal still there');
+  check(data.kind == Enum_.B, 'Enum_ enum parsed');
   check(EverythingVariables(s: Stream_(from: Future_.NOW))
           .toJson()['s']['from'] == 'NOW',
       'Stream_ input serialized');
@@ -525,6 +539,140 @@ void main() {
 }
 ''';
 
+// Operations named like GraphQLClient members: the extension methods would be
+// shadowed by the client's own (query, readQuery, link, ...).
+const _clientNamesSchema = r'''
+type Query { a: Int, item(id: ID!): Int }
+type Mutation { b: Int }
+type Subscription { c: Int }
+''';
+
+const _clientNamesDocuments = [
+  r'''
+query Query { a }
+query Fragment { a }
+query Link { a }
+query Item($id: ID!) { item(id: $id) }
+mutation Mutate { b }
+subscription Subscribe { c }
+query Introspection {
+  __schema { queryType { name } }
+  __type(name: "Query") { name }
+}
+''',
+];
+
+const _clientNamesMain = r'''
+import 'package:fgc_compile_check/client_names/Fragment.g.dart';
+import 'package:fgc_compile_check/client_names/Introspection.g.dart';
+import 'package:fgc_compile_check/client_names/Item.g.dart';
+import 'package:fgc_compile_check/client_names/Link.g.dart';
+import 'package:fgc_compile_check/client_names/Mutate.g.dart';
+import 'package:fgc_compile_check/client_names/Query.g.dart';
+import 'package:fgc_compile_check/client_names/Subscribe.g.dart';
+import 'package:graphql/client.dart';
+
+class FakeLink extends Link {
+  @override
+  Stream<Response> request(Request request, [NextLink? forward]) async* {
+    final data = switch (request.operation.operationName) {
+      'Mutate' => {'b': 2},
+      'Subscribe' => {'c': 3},
+      _ => {'a': 1},
+    };
+    yield Response(data: data, response: const {});
+  }
+}
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: $message');
+}
+
+Future<void> main() async {
+  final client = GraphQLClient(
+    link: FakeLink(),
+    cache: GraphQLCache(),
+    defaultPolicies: DefaultPolicies(
+      query: Policies(fetch: FetchPolicy.noCache),
+      mutate: Policies(fetch: FetchPolicy.noCache),
+      subscribe: Policies(fetch: FetchPolicy.noCache),
+    ),
+  );
+
+  check((await client.query_()).data!['a'] == 1, 'query_ runs the operation');
+  check(await client.queryData() == 1, 'queryData');
+  client.writeQuery_({'__typename': 'Query', 'a': 5});
+  check(client.readQuery_() == 5, 'readQuery_/writeQuery_ use the cache');
+  check(client.evictQuery() && client.readQuery_() == null, 'evictQuery');
+
+  // evict removes the entry for the given variables only.
+  client.writeItem(const ItemVariables(id: '1'), {'__typename': 'Query', 'item': 10});
+  client.writeItem(const ItemVariables(id: '2'), {'__typename': 'Query', 'item': 20});
+  check(client.evictItem(const ItemVariables(id: '1')), 'evictItem');
+  check(client.readItem(const ItemVariables(id: '1')) == null &&
+          client.readItem(const ItemVariables(id: '2')) == 20,
+      'other variables stay cached');
+  check(!client.evictItem(const ItemVariables(id: '1')), 'nothing to evict');
+  client.writeFragment_({'__typename': 'Query', 'a': 6});
+  check(client.readFragment_() == 6, 'readFragment_/writeFragment_');
+  check(await client.linkData() == 1 && client.link is FakeLink,
+      'link_ keeps the client link');
+  check((await client.link_()).data!['a'] == 1, 'link_');
+  check(await client.mutateData() == 2, 'mutate_');
+  check(await client.subscribeData().first == 3, 'subscribe_');
+
+  // __schema and __type aren't in the SDL; they stay raw JSON.
+  final meta = parseIntrospectionData({
+    '__schema': {
+      'queryType': {'name': 'Query'}
+    },
+    '__type': {'name': 'Query'},
+  });
+  check(meta.schema__!['queryType']['name'] == 'Query', '__schema');
+  check(meta.type__!['name'] == 'Query', '__type');
+  print('CLIENT NAMES OK');
+}
+''';
+
+// include_null_inputs: null input fields and variables are sent as null,
+// except variables with a default value (null would override it).
+const _nullsSchema = r'''
+input Patch { name: String, note: String }
+type Query { ok: Boolean }
+type Mutation {
+  update(id: ID!, patch: Patch!, limit: Int = 5, tag: String): Boolean
+}
+''';
+
+const _nullsDocuments = [
+  r'''
+mutation Update($id: ID!, $patch: Patch!, $limit: Int = 5, $tag: String) {
+  update(id: $id, patch: $patch, limit: $limit, tag: $tag)
+}
+''',
+];
+
+String _nullsMain(String dir, {required bool sendsNulls}) => '''
+import 'package:fgc_compile_check/$dir/Update.g.dart';
+import 'package:fgc_compile_check/$dir/types.dart';
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: \$message');
+}
+
+void main() {
+  final vars = UpdateVariables(id: '1', patch: Patch(name: 'x')).toJson();
+  final patch = vars['patch'] as Map<String, dynamic>;
+  check(patch['name'] == 'x', 'set field sent');
+  check(patch.containsKey('note') == $sendsNulls, 'null input field');
+  check(vars.containsKey('tag') == $sendsNulls, 'null variable');
+  check(!vars.containsKey('limit'), 'variable with a default is omitted');
+  check(UpdateVariables(id: '1', patch: Patch(), limit: 3).toJson()['limit'] == 3,
+      'variable with a default is sent when set');
+  print('NULLS OK');
+}
+''';
+
 // scalar_mapping with imports: a converter (Money), a type with
 // fromJson/toJson (Cents) and the short form (Date: DateTime).
 const _mappedLibrary = r'''
@@ -644,6 +792,16 @@ void main() {
       ..._generate('collide', _collideSchema, _collideDocuments, strict: true),
       ..._generate('edge', _edgeSchema, _edgeDocuments, strict: true),
       ..._generate('edge_legacy', _edgeSchema, _edgeDocuments, strict: false),
+      ..._generate('client_names', _clientNamesSchema, _clientNamesDocuments,
+          strict: true),
+      ..._generate('nulls', _nullsSchema, _nullsDocuments,
+          strict: true, includeNullInputs: true),
+      ..._generate('nulls_default', _nullsSchema, _nullsDocuments,
+          strict: true),
+      // No object types: nothing for json_serializable, so no part file.
+      ..._generate(
+          'no_objects', 'enum Color { RED GREEN }\nscalar JSON', const [],
+          strict: true),
       ..._generate('mapped', _mappedSchema, _mappedDocuments,
           strict: true,
           scalarMapping: {
@@ -664,6 +822,9 @@ void main() {
       'bin/fallback.dart': _fallbackMain,
       'bin/collide.dart': _collideMain,
       'bin/edge.dart': _edgeMain,
+      'bin/client_names.dart': _clientNamesMain,
+      'bin/nulls.dart': _nullsMain('nulls', sendsNulls: true),
+      'bin/nulls_default.dart': _nullsMain('nulls_default', sendsNulls: false),
     };
 
     final result = await compileGenerated(
@@ -674,6 +835,9 @@ void main() {
         'bin/collide.dart',
         'bin/mapped.dart',
         'bin/edge.dart',
+        'bin/client_names.dart',
+        'bin/nulls.dart',
+        'bin/nulls_default.dart',
       ],
       // json_serializable's output uses deprecated members when they are
       // annotated; that trade-off of deprecated_annotations is documented.

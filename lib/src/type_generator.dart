@@ -38,22 +38,28 @@ class TypeGenerator {
   static String generateTypesFile(String schema) {
     final schemaDoc =
         DocumentUtils.mergeSchemaExtensions(gql_lang.parseString(schema));
+    _checkStructure(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schemaDoc);
     _checkStrictScalars();
     _nullableConverters.clear();
+    _usesEnumRaw = false;
     final needsConvert = _wrappedScalars(TypeRegistry.customScalars).isNotEmpty;
     final scalarConverters =
         _generateScalarConverters(TypeRegistry.customScalars);
     final enumDefinitions = _generateEnumDefinitions(schemaDoc);
     final enumConverters = _generateEnumConverters(schemaDoc);
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc, schema);
+    // json_serializable writes types.g.dart only for annotated classes.
+    final part = typeDefinitions.contains('@JsonSerializable')
+        ? "part 'types.g.dart';"
+        : '';
 
     return '''${CodeGenerationConstants.generatedFileWarning}
 ${CodeGenerationConstants.ignoreForFile}, unused_element, unused_import, deprecated_member_use_from_same_package
 
 ${needsConvert ? "import 'dart:convert';\n\n" : ''}import 'package:json_annotation/json_annotation.dart';
 ${scalarImportDirectives()}
-part 'types.g.dart';
+$part
 
 class Decimal {
   final String value;
@@ -295,7 +301,7 @@ $typeDefinitions
 
 ${_generatePossibleTypes()}
 
-${_generateNullableConverters()}''';
+${_generateNullableConverters()}${_usesEnumRaw ? _enumRawHelper : ''}''';
   }
 
   /// `import` lines for the libraries of mapped scalar types.
@@ -306,6 +312,58 @@ ${_generateNullableConverters()}''';
   }
 
   /// With `strict_scalars`, custom scalars must have a `scalar_mapping`.
+  /// Rejects schemas the spec doesn't allow and the generator can't turn into
+  /// valid Dart: empty types and an interface implemented twice. Runs after
+  /// `extend` definitions are merged, so fields they add count.
+  static void _checkStructure(DocumentNode schemaDoc) {
+    final problems = <String>[];
+    void interfaces(String name, List<NamedTypeNode> list) {
+      final seen = <String>{};
+      for (final i in list) {
+        if (!seen.add(i.name.value)) {
+          problems.add('$name: implements ${i.name.value} more than once');
+        }
+      }
+    }
+
+    for (final d in schemaDoc.definitions) {
+      switch (d) {
+        case ObjectTypeDefinitionNode(:final name, :final fields):
+          if (fields.isEmpty) {
+            problems
+                .add('${name.value}: an object type needs at least one field');
+          }
+          interfaces(name.value, d.interfaces);
+        case InterfaceTypeDefinitionNode(:final name, :final fields):
+          if (fields.isEmpty) {
+            problems
+                .add('${name.value}: an interface needs at least one field');
+          }
+          interfaces(name.value, d.interfaces);
+        case InputObjectTypeDefinitionNode(:final name, :final fields):
+          if (fields.isEmpty) {
+            problems
+                .add('${name.value}: an input type needs at least one field');
+          }
+        case UnionTypeDefinitionNode(:final name, :final types):
+          if (types.isEmpty) {
+            problems.add('${name.value}: a union needs at least one member');
+          }
+        case EnumTypeDefinitionNode(:final name, :final values):
+          if (values.isEmpty) {
+            problems.add('${name.value}: an enum needs at least one value');
+          }
+        default:
+      }
+    }
+    if (problems.isEmpty) return;
+    throw CodegenException(
+      CodegenErrorCodes.schemaInvalidStructure,
+      'The schema has types the GraphQL spec does not allow:\n'
+      '${problems.map((p) => '  - $p').join('\n')}',
+    );
+  }
+
   static void _checkStrictScalars() {
     if (!CodegenConfigContext.strictScalars) return;
     final unmapped = TypeRegistry.customScalars
@@ -552,6 +610,7 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
       fields: typeNode.fields.map(_fieldOf).toList(),
       supertypes: _dartSupertypes(typeName),
       overriddenFields: _inheritedFieldNames(typeName, interfaces),
+      rawEnumFields: true,
     );
   }
 
@@ -563,6 +622,9 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
       className: SchemaAnalyzer.dartTypeName(inputNode.name.value),
       description: inputNode.description,
       fields: inputNode.fields.map(_inputFieldOf).toList(),
+      // With include_null_inputs a null field is sent as null, so the server
+      // can tell "clear it" from "leave it".
+      includeIfNull: CodegenConfigContext.includeNullInputs,
     );
   }
 
@@ -682,11 +744,13 @@ class $unknownName implements $name {
     List<String> supertypes = const [],
     Set<String> overriddenFields = const {},
     String? fieldNameClassName,
+    bool includeIfNull = false,
+    bool rawEnumFields = false,
   }) {
     final buffer = StringBuffer();
     buffer.write(_docComment(description));
     buffer.writeln(
-        '@JsonSerializable(includeIfNull: false, explicitToJson: true, fieldRename: FieldRename.none)');
+        '@JsonSerializable(includeIfNull: $includeIfNull, explicitToJson: true, fieldRename: FieldRename.none)');
     final impl =
         supertypes.isEmpty ? '' : ' implements ${supertypes.join(', ')}';
     buffer.writeln('class $className$impl {');
@@ -707,6 +771,10 @@ class $unknownName implements $name {
         buffer.writeln(line);
       }
       buffer.writeln('  ${SchemaAnalyzer.getDartType(type)} $dartName;');
+      if (rawEnumFields) {
+        buffer.write(_rawEnumField(field, fields,
+            className: fieldNameClassName ?? className));
+      }
     }
 
     buffer.writeln();
@@ -738,6 +806,42 @@ class $unknownName implements $name {
 
     return buffer.toString();
   }
+
+  /// Whether the current types file uses [_enumRawHelper].
+  static bool _usesEnumRaw = false;
+
+  /// With `unknown_enum_fallback`, an enum field (or a list of enums) gets a
+  /// sibling `<name>Raw` with the string the server sent, so a value that
+  /// parsed to `$unknown` can still be shown or logged. It is read from the
+  /// field's JSON key and never written back.
+  static String _rawEnumField(_Field field, List<_Field> fields,
+      {required String className}) {
+    if (!CodegenConfigContext.unknownEnumFallback) return '';
+    final graphqlBase = getOriginalGraphQLType(field.type);
+    if (!TypeRegistry.isEnum(graphqlBase)) return '';
+    var type = field.type;
+    if (type is ListTypeNode) {
+      type = type.type;
+      // Only plain lists; nested lists keep just the parsed values.
+      if (type is ListTypeNode) return '';
+    }
+    final rawName = '${field.name}Raw';
+    if (fields.any((f) => f.name == rawName)) return '';
+    _usesEnumRaw = true;
+    final dartType = field.type is ListTypeNode ? 'List<String?>?' : 'String?';
+    return """
+  /// [${dartFieldName(field.name, className: className)}] as the server sent it, also when it is `\$unknown`.
+  @JsonKey(name: '${field.name}#raw', readValue: _enumRaw, includeToJson: false)
+  $dartType ${dartFieldName(rawName, className: className)};
+""";
+  }
+
+  static const _enumRawHelper = """
+/// Reads the JSON value of an enum field for its `<name>Raw` sibling (the
+/// sibling's key is the field's key plus `#raw`).
+Object? _enumRaw(Map<dynamic, dynamic> json, String key) =>
+    json[key.substring(0, key.length - 4)];
+""";
 
   /// `///` lines for a schema [description] (or [fallback] when there is
   /// none), each ending with a newline; empty when there is nothing to write.

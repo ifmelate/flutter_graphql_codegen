@@ -38,6 +38,11 @@ class GraphQLCodegenConfig {
   /// (otherwise the deprecation is only mentioned in the doc comment).
   final bool deprecatedAnnotations;
 
+  /// Sends a null input field or variable as `null` instead of leaving it out,
+  /// so the server can tell "clear it" from "leave it". Variables with a
+  /// default value are still left out when null.
+  final bool includeNullInputs;
+
   /// Checks operations against the schema (fields, arguments, variables,
   /// selections) before generating code for them.
   final bool validateDocuments;
@@ -56,7 +61,7 @@ class GraphQLCodegenConfig {
     'strict_nullability', 'file_naming', 'emit_index', 'scalar_mapping',
     'schema_headers', 'diagnostics_format', 'unknown_enum_fallback',
     'deprecated_annotations', 'validate_documents', 'strict_scalars',
-    'schema_endpoint',
+    'schema_endpoint', 'include_null_inputs',
   };
 
   GraphQLCodegenConfig({
@@ -70,6 +75,7 @@ class GraphQLCodegenConfig {
     this.diagnosticsFormat = 'plain',
     this.unknownEnumFallback = false,
     this.deprecatedAnnotations = false,
+    this.includeNullInputs = false,
     this.validateDocuments = true,
     Map<String, String>? scalarMapping,
     Map<String, String>? scalarImports,
@@ -135,6 +141,8 @@ class GraphQLCodegenConfig {
           yamlMap['unknown_enum_fallback'] as bool? ?? false;
       final deprecatedAnnotations =
           yamlMap['deprecated_annotations'] as bool? ?? false;
+      final includeNullInputs =
+          yamlMap['include_null_inputs'] as bool? ?? false;
       final validateDocuments = yamlMap['validate_documents'] as bool? ?? true;
       diagFormat =
           (yamlMap['diagnostics_format'] as String?)?.trim() ?? 'plain';
@@ -209,6 +217,7 @@ class GraphQLCodegenConfig {
         diagnosticsFormat: diagnosticsFormat,
         unknownEnumFallback: unknownEnumFallback,
         deprecatedAnnotations: deprecatedAnnotations,
+        includeNullInputs: includeNullInputs,
         validateDocuments: validateDocuments,
         scalarMapping: scalarMappingMap,
         scalarImports: scalarImports,

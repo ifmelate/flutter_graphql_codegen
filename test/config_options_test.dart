@@ -31,6 +31,12 @@ scalar_mapping:
             .deprecatedAnnotations,
         isTrue,
       );
+      expect(cfg.includeNullInputs, isFalse);
+      expect(
+        GraphQLCodegenConfig.fromYaml('${yaml}include_null_inputs: true\n')
+            .includeNullInputs,
+        isTrue,
+      );
     });
 
     test('warns about unknown keys and suggests the closest option', () {
@@ -67,6 +73,7 @@ unknown_enum_fallback: true
 deprecated_annotations: true
 validate_documents: true
 strict_scalars: false
+include_null_inputs: false
 schema_endpoint: https://example.com/graphql
 ''');
       expect(cfg.warnings, isEmpty);

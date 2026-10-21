@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-10-21
+
+### Added
+- `include_null_inputs`: send a null input field or optional variable as `null`
+  instead of leaving it out, so the server can tell "clear it" from "leave it".
+  Variables with a default value are still left out when null
+- With `unknown_enum_fallback`, enum fields of object types get a `<field>Raw`
+  sibling with the string the server sent, so a value that parsed to
+  `$unknown` can still be shown or logged
+- `evict<Operation>` on the client extension of queries removes the cached
+  result for given variables, so the next `cacheFirst` read fetches it again
+
+### Fixed
+- An operation named like a `GraphQLClient` member (`Query`, `Mutate`,
+  `Subscribe`, `Link`, `Fragment`, ...) generated extension methods that the
+  client's own members shadowed, and code that didn't compile. Those methods
+  now get a trailing underscore (`client.query_()`, `client.readQuery_()`)
+- A schema without object or input types produced a `types.dart` with
+  `part 'types.g.dart'`, which json_serializable never writes
+- A schema type named `Enum` clashed with the built-in `EnumConverter`; it is
+  now `Enum_`, like other `dart:core` names
+- Empty types (`type Mutation {}`), unions and enums, and an interface listed
+  twice in `implements` produced code that didn't compile. The build now fails
+  with `SCH402`, listing every such type
+- Operations selecting the introspection fields `__schema` or `__type` failed
+  with `BLD103`. Their result is now the raw JSON (`Map<String, dynamic>?`),
+  since those types aren't part of the SDL
+
 ## [2.4.1] - 2026-10-21
 
 ### Fixed
