@@ -1,6 +1,8 @@
 // Variables classes: value equality, typed copyWith and explicit nulls.
 import 'package:flutter_graphql_codegen/src/config_context.dart';
+import 'package:flutter_graphql_codegen/src/formatting.dart';
 import 'package:flutter_graphql_codegen/src/generator.dart';
+import 'package:pub_semver/pub_semver.dart';
 import 'package:test/test.dart';
 
 const _schema = r'''
@@ -123,6 +125,15 @@ void main() {
     expect(out, isNot(contains('withNulls')));
     expect(out, contains('UVariables_CopyWith get copyWith'));
     expect(out, contains('          id == other.id;'));
+  });
+
+  test('dart format accepts the code for Dart 3.0 packages', () {
+    final version = Version(3, 0, 0);
+    expect(() => formatGeneratedCode(code, languageVersion: version),
+        returnsNormally);
+    final types = GraphQLCodeGenerator.generateTypesFile(_schema);
+    expect(() => formatGeneratedCode(types, languageVersion: version),
+        returnsNormally);
   });
 
   test('variables named copyWith, identical or other', () {
