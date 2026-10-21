@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-10-21
+
+### Fixed
+- Didn't resolve next to `build` 3, 4 or 5 (current `build_runner`,
+  `source_gen` 4, `hive_ce_generator`): `build` was limited to 2.x. Now
+  `>=2.4.0 <6.0.0`
+- Didn't resolve next to `hive_generator` on current Dart (3.9): it keeps `dart_style`
+  at 2.3.6 (newer 2.x versions need an `analyzer` that no longer installs), and
+  2.2.0–2.4.0 required 2.3.7. `dart_style` 2.3.0 and newer work again;
+  versions before 2.3.7 format without a language version
+
 ## [2.4.0] - 2026-10-21
 
 ### Changed

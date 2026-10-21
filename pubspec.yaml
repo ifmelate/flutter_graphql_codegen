@@ -1,6 +1,6 @@
 name: flutter_graphql_codegen
 description: A powerful code generator for Flutter GraphQL applications that generates type-safe Dart classes and client extensions from GraphQL schemas and operations.
-version: 2.4.0
+version: 2.4.1
 homepage: https://github.com/ifmelate/flutter_graphql_codegen
 repository: https://github.com/ifmelate/flutter_graphql_codegen.git
 issue_tracker: https://github.com/ifmelate/flutter_graphql_codegen/issues
@@ -20,8 +20,8 @@ environment:
 dependencies:
   path: ^1.8.1
   args: ^2.4.0
-  build: ^2.4.0
-  dart_style: ">=2.3.7 <4.0.0"
+  build: ">=2.4.0 <6.0.0"
+  dart_style: ">=2.3.0 <4.0.0"
   pub_semver: ^2.1.0
   yaml: ^3.1.0
   http: ^1.1.2
