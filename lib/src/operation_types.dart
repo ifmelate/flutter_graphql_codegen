@@ -325,6 +325,9 @@ class _Shape {
   /// `__typename` used when the JSON has none (classes of a concrete type).
   String? typenameFallback;
 
+  /// The Relay-style connection fields behind a `nodes` getter, if any.
+  _Connection? connection;
+
   _Field? field(String key) => fields.where((f) => f.key == key).firstOrNull;
 
   bool isSubtypeOf(_Shape other) =>
@@ -372,6 +375,47 @@ class _Field {
   bool rawOverrides = false;
 
   bool get rawList => type is ListTypeNode;
+}
+
+/// A selected `edges` list whose items select `node` (Relay connections):
+/// the class gets `List<Node> get nodes`.
+///
+/// Matched by response key, so `edges` and `node` must not be aliased to
+/// other names (and a field aliased to `edges` counts). The node must be an
+/// object, interface or union; a class that selects a field named `nodes`
+/// itself gets no getter.
+class _Connection {
+  const _Connection(this.edges, this.node);
+
+  /// The `edges` field of the class.
+  final _Field edges;
+
+  /// The `node` field of the edge class.
+  final _Field node;
+
+  /// Getter name.
+  static const name = 'nodes';
+
+  /// The connection of [shape], whose fields are filled, or null.
+  static _Connection? of(_Shape shape) {
+    if (shape.fields.any((f) => f.dartName == name)) return null;
+    final edges = shape.field('edges');
+    final edgesType = edges?.type;
+    if (edges == null ||
+        edges.kind != _FieldKind.regular ||
+        edgesType is! ListTypeNode ||
+        edgesType.type is ListTypeNode) {
+      return null;
+    }
+    final node = edges.nested?.field('node');
+    if (node == null ||
+        node.kind != _FieldKind.regular ||
+        node.nested == null ||
+        node.type is ListTypeNode) {
+      return null;
+    }
+    return _Connection(edges, node);
+  }
 }
 
 /// Unique class names within one generated file.
@@ -800,6 +844,10 @@ class _Builder {
     _Field? inherited(String key) =>
         shape.supers.map((s) => s.field(key)).nonNulls.firstOrNull;
 
+    // A supertype's `nodes` getter must be implemented, so a selected field
+    // can't take that name.
+    final inheritsNodes = shape.supers.any((s) => s.connection != null);
+
     if (typename) {
       shape.fields.add(_Field(
         kind: _FieldKind.typename,
@@ -832,7 +880,10 @@ class _Builder {
       String dartName() {
         if (parent != null) return unique(parent.dartName);
         var name = dartFieldName(key, className: shape.name);
-        if (_memberNames.contains(name)) name = '${name}_';
+        if (_memberNames.contains(name) ||
+            (inheritsNodes && name == _Connection.name)) {
+          name = '${name}_';
+        }
         return unique(name);
       }
 
@@ -930,6 +981,7 @@ class _Builder {
         field.rawOverrides = parent?.rawName != null;
       }
     }
+    shape.connection = _Connection.of(shape);
   }
 
   static const _typenameDef = FieldDefinitionNode(
@@ -1119,8 +1171,46 @@ class _Emitter {
       }
       _out.writeln();
     }
+    _nodes(s, concrete: false);
     if (s.supers.isNotEmpty) _out.writeln('  @override');
     _out.writeln('  Map<String, dynamic> toJson();');
+  }
+
+  /// `nodes` getter of a class with a Relay-style connection (abstract
+  /// unless [concrete]).
+  void _nodes(_Shape s, {required bool concrete}) {
+    final c = s.connection;
+    if (c == null) return;
+    final node = c.node.nested!.name;
+    _out.writeln('  /// The `node` of each of [${c.edges.dartName}], '
+        'leaving out null edges and nodes.');
+    if (s.supers.any((x) => x.connection != null)) {
+      _out.writeln('  @override');
+    }
+    if (!concrete) {
+      _out
+        ..writeln('  List<$node> get ${_Connection.name};')
+        ..writeln();
+      return;
+    }
+    final edges = c.edges.dartName;
+    final nodeName = c.node.dartName;
+    final edgeNullable =
+        ctx.legacy || !(c.edges.type as ListTypeNode).type.isNonNull;
+    final nodeNullable = dartType(c.node).endsWith('?');
+    final source =
+        dartType(c.edges).endsWith('?') ? '$edges ?? const []' : edges;
+    final element = switch ((edgeNullable, nodeNullable)) {
+      (true, true) => 'if (edge?.$nodeName case final node?) node',
+      (true, false) => 'if (edge != null) edge.$nodeName',
+      (false, true) => 'if (edge.$nodeName case final node?) node',
+      (false, false) => 'edge.$nodeName',
+    };
+    _out
+      ..writeln('  List<$node> get ${_Connection.name} => [')
+      ..writeln('        for (final edge in $source) $element,')
+      ..writeln('      ];')
+      ..writeln();
   }
 
   void _iface(_Shape s) {
@@ -1218,6 +1308,7 @@ class _Emitter {
         ..writeln('  final $type $dart;')
         ..writeln();
     }
+    _nodes(s, concrete: true);
 
     // toJson.
     if (s.supers.isNotEmpty) _out.writeln('  @override');
