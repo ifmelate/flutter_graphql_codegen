@@ -3,28 +3,28 @@ import 'package:flutter_graphql_codegen/src/type_generator.dart';
 
 void main() {
   group('Integration Tests - Safe Converters with Real Data', () {
-    test('should handle RepertorySymptomDTO with null values correctly', () {
+    test('should handle CategoryDTO with null values correctly', () {
       final schema = '''
-      type RepertorySymptomDTO {
+      type CategoryDTO {
         id: Int!
         name: String!
         description: String!
-        repGlavId: Int!
+        sectionId: Int!
         parentId: Int
         hasChildren: Boolean!
-        isRegistered: Boolean!
-        degree: Int!
-        drugsCount: Int!
-        drugs: [RepertoryDrugDTO!]!
-        references: [ReferenceDTO!]!
+        isFeatured: Boolean!
+        rank: Int!
+        productsCount: Int!
+        products: [ProductDTO!]!
+        references: [LinkDTO!]!
       }
       
-      type RepertoryDrugDTO {
+      type ProductDTO {
         id: Int!
         name: String!
       }
       
-      type ReferenceDTO {
+      type LinkDTO {
         id: Int!
         title: String!
       }
@@ -46,8 +46,8 @@ void main() {
       final safeIntAnnotations =
           '@SafeIntConverter()'.allMatches(generatedCode);
 
-      // RepertorySymptomDTO should have: hasChildren, isRegistered (2 bool fields)
-      // and id, repGlavId, degree, drugsCount (4 int fields)
+      // CategoryDTO should have: hasChildren, isFeatured (2 bool fields)
+      // and id, sectionId, rank, productsCount (4 int fields)
       expect(safeBoolAnnotations.length, greaterThanOrEqualTo(2),
           reason: 'Should have at least 2 SafeBoolConverter annotations');
       expect(safeIntAnnotations.length, greaterThanOrEqualTo(4),

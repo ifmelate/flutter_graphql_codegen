@@ -6,19 +6,19 @@ void main() {
       // Simulate the actual JSON that causes the error
       final problematicJson = {
         'id': 390008,
-        'name': 'симптом',
-        'description': 'описание',
-        'repGlavId': 399,
-        'parentId': 390007,
+        'name': 'category',
+        'description': 'category description',
+        'sectionId': 10,
+        'parentId': 1007,
         'hasChildren': null, // This causes the error
-        'isRegistered': false,
-        'degree': 0,
-        'drugsCount': 1,
+        'isFeatured': false,
+        'rank': 0,
+        'productsCount': 1,
       };
 
       // This should not throw an error but currently does
       expect(() {
-        // Simulating what happens in _$RepertorySymptomDTOFromJson
+        // Simulating what happens in _$CategoryDTOFromJson
         final hasChildren = problematicJson['hasChildren'] as bool;
         print('hasChildren: $hasChildren');
       }, throwsA(isA<TypeError>()));
@@ -31,22 +31,22 @@ void main() {
     test('should handle valid boolean fields correctly', () {
       final validJson = {
         'id': 390008,
-        'name': 'симптом',
-        'description': 'описание',
-        'repGlavId': 399,
-        'parentId': 390007,
+        'name': 'category',
+        'description': 'category description',
+        'sectionId': 10,
+        'parentId': 1007,
         'hasChildren': true,
-        'isRegistered': false,
-        'degree': 0,
-        'drugsCount': 1,
+        'isFeatured': false,
+        'rank': 0,
+        'productsCount': 1,
       };
 
       // This should work fine
       final hasChildren = validJson['hasChildren'] as bool;
-      final isRegistered = validJson['isRegistered'] as bool;
+      final isFeatured = validJson['isFeatured'] as bool;
 
       expect(hasChildren, equals(true));
-      expect(isRegistered, equals(false));
+      expect(isFeatured, equals(false));
     });
   });
 }

@@ -34,7 +34,7 @@ dependencies:
   json_annotation: ^4.8.1
 
 dev_dependencies:
-  flutter_graphql_codegen: ^2.3.0
+  flutter_graphql_codegen: ^2.4.0
   build_runner: ^2.4.6
   json_serializable: ^6.7.1
 ```
@@ -301,8 +301,10 @@ Fragments can live in their own files, as long as those files match
 ### Names that aren't valid Dart
 
 A field called `class` or an enum value called `default` gets a trailing
-underscore in Dart (`class_`, `Role.default_`). JSON keys and values sent to the
-server keep the original GraphQL names.
+underscore in Dart (`class_`, `Role.default_`), and so does a field named like a
+type (`int`, `String`, `Media: Media` -> `int_`, `String_`, `Media_`). Leading
+underscores would make a name private, so they move to the end: `_id` becomes
+`id_`. JSON keys and values sent to the server keep the original GraphQL names.
 
 The same goes for schema types named like something the generated code relies
 on: `dart:core` types (`Map`, `String`, `Object`, `Future`, `Set`, ...),

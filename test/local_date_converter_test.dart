@@ -15,29 +15,29 @@ void main() {
       const schema = '''
         scalar LocalDate
 
-        input FinanceOperationsInput {
-          filterType: DateFilterTypeEnum!
+        input PaymentsInput {
+          filterType: PeriodFilterEnum!
           dateFrom: LocalDate
           dateTo: LocalDate
         }
 
         type Query {
-          financeOperations(input: FinanceOperationsInput!): FinanceOperationsResult
+          payments(input: PaymentsInput!): PaymentsResult
         }
 
-        type FinanceOperationsResult {
-          operations: [FinanceOperation!]!
+        type PaymentsResult {
+          operations: [Payment!]!
           dateFrom: LocalDate
           dateTo: LocalDate
         }
 
-        type FinanceOperation {
+        type Payment {
           value: Decimal!
           userId: Int!
           createdDate: DateTime!
         }
 
-        enum DateFilterTypeEnum {
+        enum PeriodFilterEnum {
           ALL_TIME
           LAST_YEAR
           CUSTOM_PERIOD
@@ -61,15 +61,11 @@ void main() {
           contains(
               'dynamic toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
 
-      // Check that FinanceOperationsInput uses LocalDateConverter for dateFrom and dateTo
-      expect(generatedTypes, contains('@LocalDateConverter()'));
+      // Check that PaymentsInput uses LocalDateConverter for dateFrom and dateTo
+      expect(generatedTypes, contains('@_NullableLocalDateConverter()'));
 
-      // Check that helper functions for LocalDate lists are generated
-      expect(generatedTypes, contains('_localDateListFromJson'));
-      expect(generatedTypes, contains('_localDateListToJson'));
-
-      // Verify the content contains FinanceOperationsInput class
-      expect(generatedTypes, contains('class FinanceOperationsInput'));
+      // Verify the content contains PaymentsInput class
+      expect(generatedTypes, contains('class PaymentsInput'));
     });
 
     test('should distinguish between DateTime and LocalDate converters', () {
@@ -147,25 +143,22 @@ void main() {
 
       final generatedTypes = TypeGenerator.generateTypesFile(schema);
 
-      // Check that helper functions for LocalDate lists are generated
+      // List elements go through LocalDateConverter; nullable elements
+      // through a wrapper that keeps null.
       expect(
           generatedTypes,
-          contains(
-              'List<DateTime> _localDateListFromJson(List<dynamic>? json)'));
-      expect(generatedTypes,
-          contains('List<String>? _localDateListToJson(List<DateTime>? list)'));
-
-      // Check that helper function returns date-only format
+          contains("defaultValue: const <DateTime>[])\n"
+              '  @LocalDateConverter()\n'
+              '  List<DateTime> dates;'));
       expect(
           generatedTypes,
-          contains(
-              'return list.map((item) => item.toIso8601String().split(\'T\').first).toList();'));
-
-      // Check that list fields use proper JsonKey annotations
+          contains("defaultValue: const <DateTime?>[])\n"
+              '  @_NullableLocalDateConverter()\n'
+              '  List<DateTime?>? optionalDates;'));
       expect(
           generatedTypes,
-          contains(
-              'fromJson: _localDateListFromJson, toJson: _localDateListToJson'));
+          contains('class _NullableLocalDateConverter '
+              'implements JsonConverter<DateTime?, dynamic>'));
     });
 
     test('should generate correct Dart types for LocalDate', () {
@@ -191,7 +184,7 @@ void main() {
         scalar LocalDate
 
         input ComplexInput {
-          filterType: DateFilterTypeEnum!
+          filterType: PeriodFilterEnum!
           dateFrom: LocalDate
           dateTo: LocalDate
           createdAt: DateTime!
@@ -200,7 +193,7 @@ void main() {
           dates: [LocalDate]
         }
 
-        enum DateFilterTypeEnum {
+        enum PeriodFilterEnum {
           ALL_TIME
           CUSTOM_PERIOD
         }
@@ -221,9 +214,13 @@ void main() {
 
       // Check that proper converters are applied
       final dateTimeConverterCount =
-          '@DateTimeConverter()'.allMatches(generatedTypes).length;
+          RegExp(r'@(_Nullable)?DateTimeConverter\(\)')
+              .allMatches(generatedTypes)
+              .length;
       final localDateConverterCount =
-          '@LocalDateConverter()'.allMatches(generatedTypes).length;
+          RegExp(r'@(_Nullable)?LocalDateConverter\(\)')
+              .allMatches(generatedTypes)
+              .length;
 
       expect(dateTimeConverterCount, greaterThan(0),
           reason: 'Should have DateTime converters');

@@ -188,7 +188,7 @@ void main() {
         // Should use converters for custom scalar fields
         expect(generatedCode, contains('@UUIDConverter()'));
         expect(generatedCode, contains('@DateTimeConverter()'));
-        expect(generatedCode, contains('@JSONConverter()'));
+        expect(generatedCode, contains('@_NullableJSONConverter()'));
         expect(generatedCode, contains('@BigIntConverter()'));
       });
     });
