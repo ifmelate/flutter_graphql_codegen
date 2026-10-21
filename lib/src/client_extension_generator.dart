@@ -9,6 +9,7 @@ import 'declarations.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
 import 'document_validator.dart';
+import 'flutter_generator.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
 import 'operation_types.dart';
@@ -48,7 +49,7 @@ class ClientExtensionGenerator {
 // Operation: $operationName (${operation.type.name})
 ${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, $ignores
 
-import 'package:graphql/client.dart' as graphql;
+${FlutterGenerator.imports()}import 'package:graphql/client.dart' as graphql;
 import 'package:normalize/utils.dart' as normalize;
 ${usesFragments ? "import 'fragments.dart';\n" : ''}import 'types.dart';
 $scalarImports
@@ -288,6 +289,12 @@ ${request(writeIdFields)},
         : _generateTypedParser(context, classes));
     buffer.writeln(_generateOptions(context));
     buffer.write(_generateExtension(context));
+    final flutter = _generateFlutter(context, definedTypes);
+    if (flutter.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..write(flutter);
+    }
     return (buffer.toString(), classes?.usesFragments ?? false);
   }
 
@@ -625,6 +632,25 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
       OperationType.subscription => {'Subscription': common},
     };
   }
+
+  /// The widgets and hooks of the operation (`flutter_widgets`,
+  /// `flutter_hooks`).
+  static String _generateFlutter(
+          _OperationContext ctx, Set<String> definedTypes) =>
+      FlutterGenerator.generate(FlutterOperation(
+        name: ctx.name,
+        type: ctx.operation.type,
+        pascal: ctx.pascal,
+        camel: ctx.camel,
+        resultType: ctx.returnType,
+        variables: switch (ctx.variablesKind) {
+          _VariablesKind.none => OperationVariables.none,
+          _VariablesKind.required => OperationVariables.required,
+          _VariablesKind.optional => OperationVariables.optional,
+        },
+        optionsParams: _optionsParams(ctx),
+        definedTypes: definedTypes,
+      ));
 
   static String _optionsFunction(
     _OperationContext ctx,
