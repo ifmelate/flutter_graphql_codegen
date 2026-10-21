@@ -291,6 +291,14 @@ ${request(writeIdFields)},
         : _generateTypedParser(context, classes));
     buffer.writeln(_generateOptions(context));
     buffer.write(_generateExtension(context));
+    // The result classes declare the marker too when they have copyWith.
+    if (variables.contains('_undefined') &&
+        !buffer.toString().contains(_undefinedDeclaration)) {
+      buffer
+        ..writeln()
+        ..writeln('/// Marks `copyWith` parameters that were not passed.')
+        ..writeln(_undefinedDeclaration);
+    }
     return (buffer.toString(), classes?.usesFragments ?? false);
   }
 
@@ -313,11 +321,60 @@ ${request(writeIdFields)},
   // Variables
   // ---------------------------------------------------------------------------
 
+  static const _undefinedDeclaration = 'const _undefined = Object();';
+
   static String _generateVariablesClass(_OperationContext ctx) {
     final defs = ctx.operation.variableDefinitions;
     if (defs.isEmpty) return '';
 
     final className = '${ctx.pascal}Variables';
+    final includeNull = CodegenConfigContext.includeNullInputs;
+    final fields = [
+      for (final d in defs)
+        (
+          graphqlName: d.variable.name.value,
+          dartName: dartFieldName(d.variable.name.value, className: className),
+          type: d.type,
+          dartType: JsonExprs.inputDartType(d.type,
+              forceNullable:
+                  !d.type.isNonNull || d.defaultValue?.value != null),
+          optional: !d.type.isNonNull || d.defaultValue?.value != null,
+          // An explicit null would override the default on the server.
+          hasDefault: d.defaultValue?.value != null,
+        ),
+    ];
+    final names = fields.map((f) => f.dartName).toSet();
+    String unused(String name) {
+      while (names.contains(name)) {
+        name = '${name}_';
+      }
+      return name;
+    }
+
+    final other = unused('other');
+    // As in input classes: a variable named `copyWith` would clash with the
+    // getter, one named `identical` would hide the function the copy and
+    // the explicit nulls rely on.
+    final hidesIdentical = names.contains('identical');
+    final withCopy = !names.contains('copyWith') && !hidesIdentical;
+    final copyWith = '${className}_CopyWith';
+
+    // A variable of a nullable GraphQL type passed as null to `withNulls` or
+    // `copyWith` is sent as null; a private flag per variable remembers that.
+    // With include_null_inputs only variables with a default value need it.
+    final withNulls = !hidesIdentical && fields.any((f) => !f.type.isNonNull);
+    final flagged = [
+      if (withNulls)
+        for (final f in fields)
+          if (!f.type.isNonNull && (!includeNull || f.hasDefault)) f,
+    ];
+    final flaggedNames = flagged.map((f) => f.dartName).toSet();
+    final flags = flagged.isNotEmpty;
+    String flag(String name) => '_${name}IsNull';
+    String cast(String v, String type) => type == 'dynamic' ? v : '$v as $type';
+    String param(String name, bool optional) =>
+        optional ? 'this.$name' : 'required this.$name';
+
     final buffer = StringBuffer()
       ..writeln(
           '/// Variables for the `${ctx.name}` ${ctx.operation.type.name}.')
@@ -326,31 +383,64 @@ ${request(writeIdFields)},
           'generated methods.')
       ..writeln('class $className {')
       ..writeln('  const $className({');
-
-    final fields = [
-      for (final d in defs)
-        (
-          graphqlName: d.variable.name.value,
-          dartName: dartFieldName(d.variable.name.value, className: className),
-          type: d.type,
-          optional: !d.type.isNonNull || d.defaultValue?.value != null,
-          // An explicit null would override the default on the server.
-          hasDefault: d.defaultValue?.value != null,
-        ),
-    ];
-
     for (final f in fields) {
-      buffer.writeln(f.optional
-          ? '    this.${f.dartName},'
-          : '    required this.${f.dartName},');
+      buffer.writeln('    ${param(f.dartName, f.optional)},');
     }
     buffer
-      ..writeln('  });')
+      ..writeln(flags
+          ? '  }) : ${[
+              for (final f in flagged) '${flag(f.dartName)} = false'
+            ].join(',\n        ')};'
+          : '  });')
       ..writeln();
 
+    if (withNulls) {
+      buffer
+        ..writeln(flags
+            ? '  /// Like [$className.new], but a variable passed as `null` is '
+                'sent as `null`\n  /// (replacing its default value, if it '
+                'has one). Variables left out are not\n  /// sent.'
+            : '  /// The same as [$className.new]: with include_null_inputs '
+                'every null variable\n  /// is sent as `null`.')
+        ..writeln('  const factory $className.withNulls({');
+      for (final f in fields) {
+        buffer.writeln('    ${f.optional ? '' : 'required '}'
+            '${f.dartType} ${f.dartName},');
+      }
+      buffer
+        ..writeln('  }) = ${flags ? '$className._withNulls' : className};')
+        ..writeln();
+    }
+    if (flags) {
+      buffer.writeln('  const $className._withNulls({');
+      for (final f in fields) {
+        buffer.writeln(flaggedNames.contains(f.dartName)
+            ? '    Object? ${f.dartName} = _undefined,'
+            : '    ${param(f.dartName, f.optional)},');
+      }
+      final inits = [
+        for (final f in flagged) ...[
+          '${f.dartName} = identical(${f.dartName}, _undefined) ? null : '
+              '${cast(f.dartName, f.dartType)}',
+          '${flag(f.dartName)} = identical(${f.dartName}, null)',
+        ],
+      ];
+      buffer
+        ..writeln('  }) : ${inits.join(',\n        ')};')
+        ..writeln();
+    }
+
     for (final f in fields) {
-      final type = JsonExprs.inputDartType(f.type, forceNullable: f.optional);
-      buffer.writeln('  final $type ${f.dartName};');
+      buffer.writeln('  final ${f.dartType} ${f.dartName};');
+    }
+    if (flags) {
+      buffer
+        ..writeln()
+        ..writeln('  // Whether a null variable is sent as null (set by '
+            'withNulls and copyWith).');
+      for (final f in flagged) {
+        buffer.writeln('  final bool ${flag(f.dartName)};');
+      }
     }
 
     buffer
@@ -360,11 +450,15 @@ ${request(writeIdFields)},
       if (f.optional) {
         var expr = JsonExprs.toJsonExpr(f.type, '${f.dartName}!');
         if (expr == '${f.dartName}!') expr = f.dartName;
-        if (CodegenConfigContext.includeNullInputs && !f.hasDefault) {
+        if (includeNull && !f.hasDefault) {
           final value = expr == f.dartName
               ? expr
               : '${f.dartName} == null ? null : $expr';
           buffer.writeln("        '${f.graphqlName}': $value,");
+        } else if (flaggedNames.contains(f.dartName)) {
+          buffer.writeln("        if (${f.dartName} != null) "
+              "'${f.graphqlName}': $expr "
+              "else if (${flag(f.dartName)}) '${f.graphqlName}': null,");
         } else {
           buffer.writeln("        if (${f.dartName} != null) "
               "'${f.graphqlName}': $expr,");
@@ -376,7 +470,96 @@ ${request(writeIdFields)},
     }
     buffer
       ..writeln('      };')
+      ..writeln();
+
+    if (withCopy) {
+      buffer
+        ..writeln('  /// Copies these variables with the given ones replaced.')
+        ..writeln('  $copyWith get copyWith => _$copyWith(this);')
+        ..writeln();
+    }
+
+    bool deep(String type) => type.startsWith('List<');
+    buffer
+      ..writeln('  @override')
+      ..writeln('  bool operator ==(Object $other) =>');
+    if (!hidesIdentical) buffer.writeln('      identical(this, $other) ||');
+    buffer.write('      $other is $className');
+    for (final f in fields) {
+      buffer.write(deep(f.dartType)
+          ? ' &&\n          graphqlDeepEquals(${f.dartName}, '
+              '$other.${f.dartName})'
+          : ' &&\n          ${f.dartName} == $other.${f.dartName}');
+    }
+    // An explicit null is sent, an absent variable is not: they differ.
+    for (final f in flagged) {
+      buffer.write(' &&\n          ${flag(f.dartName)} == '
+          '$other.${flag(f.dartName)}');
+    }
+    buffer
+      ..writeln(';')
+      ..writeln()
+      ..writeln('  @override')
+      ..writeln('  int get hashCode => Object.hashAll([');
+    for (final f in fields) {
+      buffer.writeln(deep(f.dartType)
+          ? '        graphqlDeepHash(${f.dartName}),'
+          : '        ${f.dartName},');
+    }
+    for (final f in flagged) {
+      buffer.writeln('        ${flag(f.dartName)},');
+    }
+    buffer
+      ..writeln('      ]);')
       ..writeln('}');
+
+    if (withCopy) {
+      buffer
+        ..writeln()
+        ..writeln(flags
+            ? '/// `copyWith` of [$className]. A variable set to `null` is '
+                'sent as `null`\n/// (see [$className.withNulls]).'
+            : '/// `copyWith` of [$className]; `null` sets a variable to '
+                'null.')
+        ..writeln('abstract class $copyWith {')
+        ..writeln('  $className call({');
+      for (final f in fields) {
+        final type = f.dartType.endsWith('?') || f.dartType == 'dynamic'
+            ? f.dartType
+            : '${f.dartType}?';
+        buffer.writeln('    $type ${f.dartName},');
+      }
+      buffer
+        ..writeln('  });')
+        ..writeln('}')
+        ..writeln()
+        ..writeln('class _$copyWith implements $copyWith {')
+        ..writeln('  const _$copyWith(this._value);')
+        ..writeln()
+        ..writeln('  final $className _value;')
+        ..writeln()
+        ..writeln('  @override')
+        ..writeln('  $className call({');
+      for (final f in fields) {
+        buffer.writeln('    Object? ${f.dartName} = _undefined,');
+      }
+      buffer
+        ..writeln('  }) =>')
+        ..writeln('      ${flags ? '$className._withNulls' : className}(');
+      for (final f in fields) {
+        final name = f.dartName;
+        final isFlagged = flaggedNames.contains(name);
+        final keep = isFlagged
+            ? '(_value.${flag(name)} ? null : _value.$name ?? _undefined)'
+            : '_value.$name';
+        final passed = isFlagged ? name : cast(name, f.dartType);
+        buffer.writeln(
+            '        $name: identical($name, _undefined) ? $keep : $passed,');
+      }
+      buffer
+        ..writeln('      );')
+        ..writeln('}');
+    }
     return buffer.toString();
   }
 
