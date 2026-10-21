@@ -10,6 +10,8 @@ void main() {
       // Clear type registry before each test
       TypeRegistry.clear();
       CodegenConfigContext.strictNullability = true;
+      // These tests describe operation files returning schema classes.
+      CodegenConfigContext.resultTypes = 'schema';
     });
 
     tearDown(() {

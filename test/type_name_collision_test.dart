@@ -1,6 +1,8 @@
 import 'package:flutter_graphql_codegen/src/config_context.dart';
 import 'package:flutter_graphql_codegen/src/generator.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
+import 'package:gql/ast.dart';
+import 'package:gql/language.dart' as gql_lang;
 import 'package:test/test.dart';
 
 // Schema types named like identifiers the generated code uses (dart:core,
@@ -80,6 +82,8 @@ type Query { price: Price }
   });
 
   test('operation files use the escaped names', () {
+    CodegenConfigContext.resultTypes = 'schema';
+    addTearDown(() => CodegenConfigContext.resultTypes = 'operation');
     final code = GraphQLCodeGenerator.generateOperationFile(
         _schema,
         r'query GetMap($f: Stream) { maps(filter: $f) { key } when }',
@@ -89,5 +93,37 @@ type Query { price: Price }
     expect(code, contains('final Stream_? f;'));
     expect(code, contains('Map_.fromJson('));
     expect(code, contains('const Future_Converter().fromJson('));
+  });
+
+  test('operation classes use the escaped names of types.dart', () {
+    final code = GraphQLCodeGenerator.generateOperationFile(
+        _schema,
+        r'query GetMap($f: Stream) { maps(filter: $f) { key } when }',
+        'GetMap',
+        'query',
+        types);
+    expect(code, contains('final Stream_? f;'));
+    expect(code, contains('GetMap_Maps.fromJson('));
+    expect(code, contains('const Future_Converter().fromJson('));
+    expect(code, contains('final Future_? when;'));
+  });
+
+  test('fragments named like types of types.dart get a trailing _', () {
+    final fragments = {
+      for (final d in gql_lang
+          .parseString(
+              'fragment Future on Map { key }\nfragment Enum on Map { key }\n'
+              'fragment Bits on Map { key }')
+          .definitions
+          .whereType<FragmentDefinitionNode>())
+        d.name.value: d,
+    };
+    final code =
+        GraphQLCodeGenerator.generateFragmentsFile(_schema, fragments)!;
+    // The enum Future is already Future_ in Dart.
+    expect(code, contains('abstract interface class Future__ {'));
+    expect(code, contains('abstract interface class Enum_ {'));
+    expect(code, contains('class Future__Data implements Future__ {'));
+    expect(code, contains('abstract interface class Bits {'));
   });
 }

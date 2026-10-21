@@ -126,11 +126,21 @@ ${_base}scalar_mapping:
       const schema = 'scalar Money\ntype Query { total: Money! cents: Cents }'
           '\nscalar Cents';
       CodegenConfigContext.scalarMapping['Cents'] = 'Cents';
+      CodegenConfigContext.resultTypes = 'schema';
       final types = TypeGenerator.generateTypesFile(schema);
       final out = GraphQLCodeGenerator.generateOperationFile(
           schema, 'query T { total cents }', 'T', 'query', types);
       expect(out, contains("const MoneyConverter().fromJson(data['total'])"));
       expect(out, contains("Cents.fromJson(data['cents'])"));
+
+      CodegenConfigContext.resultTypes = 'operation';
+      final classes = GraphQLCodeGenerator.generateOperationFile(
+          schema, 'query T { total cents }', 'T', 'query', types);
+      expect(
+          classes, contains("const MoneyConverter().fromJson(json['total'])"));
+      expect(classes, contains("Cents.fromJson(json['cents'])"));
+      expect(classes, contains("const MoneyConverter().toJson(total!)"));
+      expect(classes, contains("'cents': cents?.toJson()"));
     });
   });
 
