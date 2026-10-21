@@ -525,6 +525,74 @@ void main() {
 }
 ''';
 
+// Operations named like GraphQLClient members: the extension methods would be
+// shadowed by the client's own (query, readQuery, link, ...).
+const _clientNamesSchema = r'''
+type Query { a: Int }
+type Mutation { b: Int }
+type Subscription { c: Int }
+''';
+
+const _clientNamesDocuments = [
+  r'''
+query Query { a }
+query Fragment { a }
+query Link { a }
+mutation Mutate { b }
+subscription Subscribe { c }
+''',
+];
+
+const _clientNamesMain = r'''
+import 'package:fgc_compile_check/client_names/Fragment.g.dart';
+import 'package:fgc_compile_check/client_names/Link.g.dart';
+import 'package:fgc_compile_check/client_names/Mutate.g.dart';
+import 'package:fgc_compile_check/client_names/Query.g.dart';
+import 'package:fgc_compile_check/client_names/Subscribe.g.dart';
+import 'package:graphql/client.dart';
+
+class FakeLink extends Link {
+  @override
+  Stream<Response> request(Request request, [NextLink? forward]) async* {
+    final data = switch (request.operation.operationName) {
+      'Mutate' => {'b': 2},
+      'Subscribe' => {'c': 3},
+      _ => {'a': 1},
+    };
+    yield Response(data: data, response: const {});
+  }
+}
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: $message');
+}
+
+Future<void> main() async {
+  final client = GraphQLClient(
+    link: FakeLink(),
+    cache: GraphQLCache(),
+    defaultPolicies: DefaultPolicies(
+      query: Policies(fetch: FetchPolicy.noCache),
+      mutate: Policies(fetch: FetchPolicy.noCache),
+      subscribe: Policies(fetch: FetchPolicy.noCache),
+    ),
+  );
+
+  check((await client.query_()).data!['a'] == 1, 'query_ runs the operation');
+  check(await client.queryData() == 1, 'queryData');
+  client.writeQuery_({'__typename': 'Query', 'a': 5});
+  check(client.readQuery_() == 5, 'readQuery_/writeQuery_ use the cache');
+  client.writeFragment_({'__typename': 'Query', 'a': 6});
+  check(client.readFragment_() == 6, 'readFragment_/writeFragment_');
+  check(await client.linkData() == 1 && client.link is FakeLink,
+      'link_ keeps the client link');
+  check((await client.link_()).data!['a'] == 1, 'link_');
+  check(await client.mutateData() == 2, 'mutate_');
+  check(await client.subscribeData().first == 3, 'subscribe_');
+  print('CLIENT NAMES OK');
+}
+''';
+
 // scalar_mapping with imports: a converter (Money), a type with
 // fromJson/toJson (Cents) and the short form (Date: DateTime).
 const _mappedLibrary = r'''
@@ -644,6 +712,8 @@ void main() {
       ..._generate('collide', _collideSchema, _collideDocuments, strict: true),
       ..._generate('edge', _edgeSchema, _edgeDocuments, strict: true),
       ..._generate('edge_legacy', _edgeSchema, _edgeDocuments, strict: false),
+      ..._generate('client_names', _clientNamesSchema, _clientNamesDocuments,
+          strict: true),
       ..._generate('mapped', _mappedSchema, _mappedDocuments,
           strict: true,
           scalarMapping: {
@@ -664,6 +734,7 @@ void main() {
       'bin/fallback.dart': _fallbackMain,
       'bin/collide.dart': _collideMain,
       'bin/edge.dart': _edgeMain,
+      'bin/client_names.dart': _clientNamesMain,
     };
 
     final result = await compileGenerated(
@@ -674,6 +745,7 @@ void main() {
         'bin/collide.dart',
         'bin/mapped.dart',
         'bin/edge.dart',
+        'bin/client_names.dart',
       ],
       // json_serializable's output uses deprecated members when they are
       // annotated; that trade-off of deprecated_annotations is documented.

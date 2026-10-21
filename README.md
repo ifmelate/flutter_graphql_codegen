@@ -306,6 +306,10 @@ type (`int`, `String`, `Media: Media` -> `int_`, `String_`, `Media_`). Leading
 underscores would make a name private, so they move to the end: `_id` becomes
 `id_`. JSON keys and values sent to the server keep the original GraphQL names.
 
+Client methods of an operation named like a `GraphQLClient` member get one too:
+`query Query` gives `client.query_()`, `client.readQuery_()` and
+`client.writeQuery_()` (and `client.queryData()`, which doesn't clash).
+
 The same goes for schema types named like something the generated code relies
 on: `dart:core` types (`Map`, `String`, `Object`, `Future`, `Set`, ...),
 `json_annotation` classes (`JsonKey`, ...) and the built-in helpers (`Decimal`,

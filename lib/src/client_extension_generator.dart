@@ -312,6 +312,8 @@ $body''';
 
   static String _generateExtension(_OperationContext ctx) {
     final camel = ctx.camel;
+    final run = _extensionMember(camel);
+    final runData = _extensionMember('${camel}Data');
     final parse = 'parse${ctx.pascal}Data';
     final kind = ctx.operation.type;
     const vars = '[Map<String, dynamic>? variables]';
@@ -327,8 +329,8 @@ extension ${ctx.name}Extension on graphql.GraphQLClient {
   /// Subscribes to `${ctx.name}` and emits raw results.
   ///
   /// Results with errors are emitted as [graphql.OperationException] errors.
-  Stream<$resultType> $camel($vars) {
-    return subscribe(
+  Stream<$resultType> $run($vars) {
+    return this.subscribe(
       graphql.SubscriptionOptions<Map<String, dynamic>>(
 $options
       ),
@@ -341,8 +343,8 @@ $options
   }
 
   /// Subscribes to `${ctx.name}` and emits typed data.
-  Stream<${ctx.returnType}> ${camel}Data($vars) {
-    return $camel(variables)
+  Stream<${ctx.returnType}> $runData($vars) {
+    return $run(variables)
         .where((result) => !(result.isLoading && result.data == null))
         .map((result) => $parse(result.data));
   }
@@ -358,8 +360,8 @@ extension ${ctx.name}Extension on graphql.GraphQLClient {
   /// Executes `${ctx.name}` and returns the raw result.
   ///
   /// Throws [graphql.OperationException] when the result has errors.
-  Future<$resultType> $camel($vars) async {
-    final result = await $method(
+  Future<$resultType> $run($vars) async {
+    final result = await this.$method(
       graphql.$optionsType<Map<String, dynamic>>(
 $options
       ),
@@ -371,13 +373,26 @@ $options
   }
 
   /// Executes `${ctx.name}` and returns typed data.
-  Future<${ctx.returnType}> ${camel}Data($vars) async {
-    final result = await $camel(variables);
+  Future<${ctx.returnType}> $runData($vars) async {
+    final result = await $run(variables);
     return $parse(result.data);
   }
 ${isMutation ? '' : _generateCacheHelpers(ctx)}}
 ''';
   }
+
+  /// Members of `GraphQLClient` (and `Object`). An extension method with one of
+  /// these names would never be called: the client's own member wins. So such
+  /// names get a trailing underscore (operation `Query` -> `client.query_()`).
+  static const _clientMemberNames = {
+    'cache', 'copyWith', 'defaultPolicies', 'fetchMore', 'link', 'mutate', //
+    'query', 'queryManager', 'readFragment', 'readQuery', 'resetStore',
+    'subscribe', 'watchMutation', 'watchQuery', 'writeFragment', 'writeQuery',
+    'hashCode', 'noSuchMethod', 'runtimeType', 'toString',
+  };
+
+  static String _extensionMember(String name) =>
+      _clientMemberNames.contains(name) ? '${name}_' : name;
 
   // ---------------------------------------------------------------------------
   // Typed options and cache helpers
@@ -504,16 +519,16 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
     return '''
 
   /// Reads `${ctx.name}` from the cache; null when it isn't cached.
-  $t read${ctx.pascal}($readParams) {
+  $t ${_extensionMember('read${ctx.pascal}')}($readParams) {
     final Map<String, dynamic>? data =
-        readQuery($options($args).asRequest, optimistic: optimistic);
+        this.readQuery($options($args).asRequest, optimistic: optimistic);
     return data == null ? null : parse${ctx.pascal}Data(data);
   }
 
   /// Writes raw `data` for `${ctx.name}` into the cache, shaped as the server
   /// returns it, including `__typename` on every object (also the root).
-  void write${ctx.pascal}($writeParams) {
-    writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
+  void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
+    this.writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
   }
 ''';
   }

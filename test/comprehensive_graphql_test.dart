@@ -393,7 +393,7 @@ void main() {
 
         // Should generate mutation extension
         expect(operationCode, contains('extension CreateUserExtension'));
-        expect(operationCode, contains('await mutate('));
+        expect(operationCode, contains('await this.mutate('));
         expect(operationCode,
             contains('graphql.MutationOptions<Map<String, dynamic>>('));
         expect(operationCode, contains('CreateUserPayload'));
@@ -445,7 +445,7 @@ void main() {
             operationCode,
             contains('Stream<graphql.QueryResult<Map<String, dynamic>>> '
                 'userUpdated('));
-        expect(operationCode, contains('return subscribe('));
+        expect(operationCode, contains('return this.subscribe('));
         expect(operationCode,
             contains('graphql.SubscriptionOptions<Map<String, dynamic>>('));
         expect(operationCode, contains('Stream<User> userUpdatedData('));
