@@ -125,6 +125,7 @@ and 64 on wrong usage, so it works in scripts and CI.
 | `diagnostics_format` | `plain` | `plain` or `json` error output |
 | `unknown_enum_fallback` | `false` | Add a `$unknown` value to every enum instead of throwing on values the server added later (see below) |
 | `deprecated_annotations` | `false` | Turn schema `@deprecated` into Dart `@Deprecated` (see below) |
+| `include_null_inputs` | `false` | Send a null input field or variable as `null` instead of leaving it out (see below) |
 | `validate_documents` | `true` | Check operations against the schema before generating (see [Errors](#errors)) |
 | `strict_scalars` | `false` | Fail when a custom scalar has no `scalar_mapping` entry (see [Custom scalars](#custom-scalars)) |
 | `schema_endpoint` | none | Where `fetch_schema` downloads the schema from (see above) |
@@ -143,6 +144,13 @@ time. With the option on, every enum gets an extra `$unknown` value, and unknown
 values parse to it, also inside lists. Sending `$unknown` back to the server
 throws `ArgumentError`. It's off by default because the extra value makes your
 existing exhaustive `switch` statements over enums incomplete.
+
+About `include_null_inputs`: by default a null field of an input type, or a null
+optional variable, is left out of the request. For a server that means "not
+set", so you can't clear a field. With the option on, it is sent as `null`.
+Variables with a default value (`$first: Int = 10`) are still left out when
+null, because an explicit `null` would replace the default. This matches
+`includeIfNull` in Artemis, if you are moving from there.
 
 About `deprecated_annotations`: descriptions from the schema always become doc
 comments, and a `@deprecated` field or enum value gets a `Deprecated: <reason>`

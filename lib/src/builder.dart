@@ -552,6 +552,7 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   CodegenConfigContext.scalarMapping = Map.of(cfg.scalarMapping);
   CodegenConfigContext.unknownEnumFallback = cfg.unknownEnumFallback;
   CodegenConfigContext.deprecatedAnnotations = cfg.deprecatedAnnotations;
+  CodegenConfigContext.includeNullInputs = cfg.includeNullInputs;
   CodegenConfigContext.validateDocuments = cfg.validateDocuments;
   CodegenConfigContext.scalarImports = Map.of(cfg.scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(cfg.scalarConverters);

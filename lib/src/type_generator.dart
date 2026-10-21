@@ -620,6 +620,9 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
       className: SchemaAnalyzer.dartTypeName(inputNode.name.value),
       description: inputNode.description,
       fields: inputNode.fields.map(_inputFieldOf).toList(),
+      // With include_null_inputs a null field is sent as null, so the server
+      // can tell "clear it" from "leave it".
+      includeIfNull: CodegenConfigContext.includeNullInputs,
     );
   }
 
@@ -739,11 +742,12 @@ class $unknownName implements $name {
     List<String> supertypes = const [],
     Set<String> overriddenFields = const {},
     String? fieldNameClassName,
+    bool includeIfNull = false,
   }) {
     final buffer = StringBuffer();
     buffer.write(_docComment(description));
     buffer.writeln(
-        '@JsonSerializable(includeIfNull: false, explicitToJson: true, fieldRename: FieldRename.none)');
+        '@JsonSerializable(includeIfNull: $includeIfNull, explicitToJson: true, fieldRename: FieldRename.none)');
     final impl =
         supertypes.isEmpty ? '' : ' implements ${supertypes.join(', ')}';
     buffer.writeln('class $className$impl {');

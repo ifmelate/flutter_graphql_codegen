@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `include_null_inputs`: send a null input field or optional variable as `null`
+  instead of leaving it out, so the server can tell "clear it" from "leave it".
+  Variables with a default value are still left out when null
+
 ### Fixed
 - An operation named like a `GraphQLClient` member (`Query`, `Mutate`,
   `Subscribe`, `Link`, `Fragment`, ...) generated extension methods that the

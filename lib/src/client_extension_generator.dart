@@ -147,6 +147,8 @@ $body''';
           dartName: dartFieldName(d.variable.name.value, className: className),
           type: d.type,
           optional: !d.type.isNonNull || d.defaultValue?.value != null,
+          // An explicit null would override the default on the server.
+          hasDefault: d.defaultValue?.value != null,
         ),
     ];
 
@@ -171,8 +173,15 @@ $body''';
       if (f.optional) {
         var expr = _toJsonExpr(f.type, '${f.dartName}!');
         if (expr == '${f.dartName}!') expr = f.dartName;
-        buffer.writeln("        if (${f.dartName} != null) "
-            "'${f.graphqlName}': $expr,");
+        if (CodegenConfigContext.includeNullInputs && !f.hasDefault) {
+          final value = expr == f.dartName
+              ? expr
+              : '${f.dartName} == null ? null : $expr';
+          buffer.writeln("        '${f.graphqlName}': $value,");
+        } else {
+          buffer.writeln("        if (${f.dartName} != null) "
+              "'${f.graphqlName}': $expr,");
+        }
       } else {
         buffer.writeln("        '${f.graphqlName}': "
             "${_toJsonExpr(f.type, f.dartName)},");

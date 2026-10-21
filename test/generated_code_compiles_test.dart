@@ -28,6 +28,7 @@ Map<String, String> _generate(
   required bool strict,
   bool unknownEnumFallback = false,
   bool deprecatedAnnotations = false,
+  bool includeNullInputs = false,
   Map<String, String> scalarMapping = const {},
   Map<String, String> scalarImports = const {},
   Map<String, String> scalarConverters = const {},
@@ -36,6 +37,7 @@ Map<String, String> _generate(
   CodegenConfigContext.strictNullability = strict;
   CodegenConfigContext.unknownEnumFallback = unknownEnumFallback;
   CodegenConfigContext.deprecatedAnnotations = deprecatedAnnotations;
+  CodegenConfigContext.includeNullInputs = includeNullInputs;
   CodegenConfigContext.scalarMapping = Map.of(scalarMapping);
   CodegenConfigContext.scalarImports = Map.of(scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(scalarConverters);
@@ -613,6 +615,45 @@ Future<void> main() async {
 }
 ''';
 
+// include_null_inputs: null input fields and variables are sent as null,
+// except variables with a default value (null would override it).
+const _nullsSchema = r'''
+input Patch { name: String, note: String }
+type Query { ok: Boolean }
+type Mutation {
+  update(id: ID!, patch: Patch!, limit: Int = 5, tag: String): Boolean
+}
+''';
+
+const _nullsDocuments = [
+  r'''
+mutation Update($id: ID!, $patch: Patch!, $limit: Int = 5, $tag: String) {
+  update(id: $id, patch: $patch, limit: $limit, tag: $tag)
+}
+''',
+];
+
+String _nullsMain(String dir, {required bool sendsNulls}) => '''
+import 'package:fgc_compile_check/$dir/Update.g.dart';
+import 'package:fgc_compile_check/$dir/types.dart';
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: \$message');
+}
+
+void main() {
+  final vars = UpdateVariables(id: '1', patch: Patch(name: 'x')).toJson();
+  final patch = vars['patch'] as Map<String, dynamic>;
+  check(patch['name'] == 'x', 'set field sent');
+  check(patch.containsKey('note') == $sendsNulls, 'null input field');
+  check(vars.containsKey('tag') == $sendsNulls, 'null variable');
+  check(!vars.containsKey('limit'), 'variable with a default is omitted');
+  check(UpdateVariables(id: '1', patch: Patch(), limit: 3).toJson()['limit'] == 3,
+      'variable with a default is sent when set');
+  print('NULLS OK');
+}
+''';
+
 // scalar_mapping with imports: a converter (Money), a type with
 // fromJson/toJson (Cents) and the short form (Date: DateTime).
 const _mappedLibrary = r'''
@@ -734,9 +775,13 @@ void main() {
       ..._generate('edge_legacy', _edgeSchema, _edgeDocuments, strict: false),
       ..._generate('client_names', _clientNamesSchema, _clientNamesDocuments,
           strict: true),
+      ..._generate('nulls', _nullsSchema, _nullsDocuments,
+          strict: true, includeNullInputs: true),
+      ..._generate('nulls_default', _nullsSchema, _nullsDocuments,
+          strict: true),
       // No object types: nothing for json_serializable, so no part file.
-      ..._generate('no_objects', 'enum Color { RED GREEN }\nscalar JSON',
-          const [],
+      ..._generate(
+          'no_objects', 'enum Color { RED GREEN }\nscalar JSON', const [],
           strict: true),
       ..._generate('mapped', _mappedSchema, _mappedDocuments,
           strict: true,
@@ -759,6 +804,8 @@ void main() {
       'bin/collide.dart': _collideMain,
       'bin/edge.dart': _edgeMain,
       'bin/client_names.dart': _clientNamesMain,
+      'bin/nulls.dart': _nullsMain('nulls', sendsNulls: true),
+      'bin/nulls_default.dart': _nullsMain('nulls_default', sendsNulls: false),
     };
 
     final result = await compileGenerated(
@@ -770,6 +817,8 @@ void main() {
         'bin/mapped.dart',
         'bin/edge.dart',
         'bin/client_names.dart',
+        'bin/nulls.dart',
+        'bin/nulls_default.dart',
       ],
       // json_serializable's output uses deprecated members when they are
       // annotated; that trade-off of deprecated_annotations is documented.
