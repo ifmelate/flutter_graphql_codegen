@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `include_null_inputs`: send a null input field or optional variable as `null`
   instead of leaving it out, so the server can tell "clear it" from "leave it".
   Variables with a default value are still left out when null
+- With `unknown_enum_fallback`, enum fields of object types get a `<field>Raw`
+  sibling with the string the server sent, so a value that parsed to
+  `$unknown` can still be shown or logged
 
 ### Fixed
 - An operation named like a `GraphQLClient` member (`Query`, `Mutate`,

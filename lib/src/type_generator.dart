@@ -42,6 +42,7 @@ class TypeGenerator {
     SchemaAnalyzer.extractCustomTypesAndEnums(schemaDoc);
     _checkStrictScalars();
     _nullableConverters.clear();
+    _usesEnumRaw = false;
     final needsConvert = _wrappedScalars(TypeRegistry.customScalars).isNotEmpty;
     final scalarConverters =
         _generateScalarConverters(TypeRegistry.customScalars);
@@ -300,7 +301,7 @@ $typeDefinitions
 
 ${_generatePossibleTypes()}
 
-${_generateNullableConverters()}''';
+${_generateNullableConverters()}${_usesEnumRaw ? _enumRawHelper : ''}''';
   }
 
   /// `import` lines for the libraries of mapped scalar types.
@@ -609,6 +610,7 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
       fields: typeNode.fields.map(_fieldOf).toList(),
       supertypes: _dartSupertypes(typeName),
       overriddenFields: _inheritedFieldNames(typeName, interfaces),
+      rawEnumFields: true,
     );
   }
 
@@ -743,6 +745,7 @@ class $unknownName implements $name {
     Set<String> overriddenFields = const {},
     String? fieldNameClassName,
     bool includeIfNull = false,
+    bool rawEnumFields = false,
   }) {
     final buffer = StringBuffer();
     buffer.write(_docComment(description));
@@ -768,6 +771,10 @@ class $unknownName implements $name {
         buffer.writeln(line);
       }
       buffer.writeln('  ${SchemaAnalyzer.getDartType(type)} $dartName;');
+      if (rawEnumFields) {
+        buffer.write(_rawEnumField(field, fields,
+            className: fieldNameClassName ?? className));
+      }
     }
 
     buffer.writeln();
@@ -799,6 +806,42 @@ class $unknownName implements $name {
 
     return buffer.toString();
   }
+
+  /// Whether the current types file uses [_enumRawHelper].
+  static bool _usesEnumRaw = false;
+
+  /// With `unknown_enum_fallback`, an enum field (or a list of enums) gets a
+  /// sibling `<name>Raw` with the string the server sent, so a value that
+  /// parsed to `$unknown` can still be shown or logged. It is read from the
+  /// field's JSON key and never written back.
+  static String _rawEnumField(_Field field, List<_Field> fields,
+      {required String className}) {
+    if (!CodegenConfigContext.unknownEnumFallback) return '';
+    final graphqlBase = getOriginalGraphQLType(field.type);
+    if (!TypeRegistry.isEnum(graphqlBase)) return '';
+    var type = field.type;
+    if (type is ListTypeNode) {
+      type = type.type;
+      // Only plain lists; nested lists keep just the parsed values.
+      if (type is ListTypeNode) return '';
+    }
+    final rawName = '${field.name}Raw';
+    if (fields.any((f) => f.name == rawName)) return '';
+    _usesEnumRaw = true;
+    final dartType = field.type is ListTypeNode ? 'List<String?>?' : 'String?';
+    return """
+  /// [${dartFieldName(field.name, className: className)}] as the server sent it, also when it is `\$unknown`.
+  @JsonKey(name: '${field.name}#raw', readValue: _enumRaw, includeToJson: false)
+  $dartType ${dartFieldName(rawName, className: className)};
+""";
+  }
+
+  static const _enumRawHelper = """
+/// Reads the JSON value of an enum field for its `<name>Raw` sibling (the
+/// sibling's key is the field's key plus `#raw`).
+Object? _enumRaw(Map<dynamic, dynamic> json, String key) =>
+    json[key.substring(0, key.length - 4)];
+""";
 
   /// `///` lines for a schema [description] (or [fallback] when there is
   /// none), each ending with a newline; empty when there is nothing to write.

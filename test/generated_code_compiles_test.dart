@@ -298,6 +298,13 @@ void main() {
   check(user.roles[1] == Role.$unknown, 'unknown value in list');
   // ignore: deprecated_member_use_from_same_package
   check(user.roles[2] == Role.default_, 'escaped value in list');
+  check(user.roleRaw == 'OWNER', 'raw value next to \$unknown');
+  check(user.rolesRaw![1] == 'OWNER' && user.rolesRaw![2] == 'default',
+      'raw values of a list');
+  final known = User.fromJson(
+      {'id': '2', 'name': 'Bob', 'role': 'ADMIN', 'roles': ['ADMIN']}).toJson();
+  check(known['role'] == 'ADMIN' && known.keys.every((k) => !k.contains('#')),
+      'raw values are not sent back');
   check(UserFilter(role: Role.ADMIN).toJson()['role'] == 'ADMIN',
       'known value serialized');
   try {

@@ -142,7 +142,10 @@ know (the server added it after you generated the code) throws while parsing.
 That is risky for mobile apps, where old versions stay installed for a long
 time. With the option on, every enum gets an extra `$unknown` value, and unknown
 values parse to it, also inside lists. Sending `$unknown` back to the server
-throws `ArgumentError`. It's off by default because the extra value makes your
+throws `ArgumentError`. Each enum field of an object type also gets a
+`<field>Raw` sibling with the string the server sent (`user.role` is
+`Role.$unknown`, `user.roleRaw` is `'OWNER'`), so you can still show or log it;
+lists get `List<String?>?`. Raw values are never sent back. It's off by default because the extra value makes your
 existing exhaustive `switch` statements over enums incomplete.
 
 About `include_null_inputs`: by default a null field of an input type, or a null
