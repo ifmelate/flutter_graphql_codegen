@@ -44,6 +44,7 @@ class ClientExtensionGenerator {
 ${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, unused_import
 
 import 'package:graphql/client.dart' as graphql;
+import 'package:normalize/utils.dart' as normalize;
 import 'types.dart';
 $scalarImports
 $body''';
@@ -506,22 +507,26 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
     final t =
         ctx.returnType.endsWith('?') ? ctx.returnType : '${ctx.returnType}?';
     final options = '${ctx.camel}QueryOptions';
-    final (readParams, writeParams, args) = switch (ctx.variablesKind) {
+    final (readParams, writeParams, evictParams, args) =
+        switch (ctx.variablesKind) {
       _VariablesKind.required => (
           '$vars variables, {bool optimistic = true}',
           '$vars variables, Map<String, dynamic> data, '
               '{bool broadcast = true}',
+          '$vars variables',
           'variables',
         ),
       _VariablesKind.optional => (
           '{$vars? variables, bool optimistic = true}',
           'Map<String, dynamic> data, '
               '{$vars? variables, bool broadcast = true}',
+          '{$vars? variables}',
           'variables: variables',
         ),
       _VariablesKind.none => (
           '{bool optimistic = true}',
           'Map<String, dynamic> data, {bool broadcast = true}',
+          '',
           '',
         ),
     };
@@ -538,6 +543,39 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
   /// returns it, including `__typename` on every object (also the root).
   void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
     this.writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
+  }
+
+  /// Removes the cached root fields of `${ctx.name}` for these variables, so
+  /// the next `cacheFirst` read fetches it again. Returns whether anything was
+  /// removed. Objects it pointed to stay cached, and active `watchQuery`
+  /// results are not notified; call `refetch()` on them if needed.
+  bool ${_extensionMember('evict${ctx.pascal}')}($evictParams) {
+    final request = $options($args).asRequest;
+    final document = request.operation.document;
+    final rootId = normalize.resolveRootTypename(
+        normalize.getOperationDefinition(
+            document, request.operation.operationName),
+        this.cache.typePolicies);
+    final root = this.cache.readNormalized(rootId, optimistic: false);
+    if (root == null) return false;
+    final keys = normalize.operationFieldNames(
+        document,
+        request.operation.operationName ?? '',
+        request.variables,
+        this.cache.typePolicies,
+        this.cache.possibleTypes);
+    final rest = Map<String, dynamic>.of(root);
+    var removed = false;
+    for (final key in keys) {
+      // Shared by every query on this root; reads need it.
+      if (key == '__typename') continue;
+      if (rest.containsKey(key)) {
+        rest.remove(key);
+        removed = true;
+      }
+    }
+    if (removed) this.cache.writeNormalized(rootId, rest);
+    return removed;
   }
 ''';
   }

@@ -542,7 +542,7 @@ void main() {
 // Operations named like GraphQLClient members: the extension methods would be
 // shadowed by the client's own (query, readQuery, link, ...).
 const _clientNamesSchema = r'''
-type Query { a: Int }
+type Query { a: Int, item(id: ID!): Int }
 type Mutation { b: Int }
 type Subscription { c: Int }
 ''';
@@ -552,6 +552,7 @@ const _clientNamesDocuments = [
 query Query { a }
 query Fragment { a }
 query Link { a }
+query Item($id: ID!) { item(id: $id) }
 mutation Mutate { b }
 subscription Subscribe { c }
 query Introspection {
@@ -564,6 +565,7 @@ query Introspection {
 const _clientNamesMain = r'''
 import 'package:fgc_compile_check/client_names/Fragment.g.dart';
 import 'package:fgc_compile_check/client_names/Introspection.g.dart';
+import 'package:fgc_compile_check/client_names/Item.g.dart';
 import 'package:fgc_compile_check/client_names/Link.g.dart';
 import 'package:fgc_compile_check/client_names/Mutate.g.dart';
 import 'package:fgc_compile_check/client_names/Query.g.dart';
@@ -601,6 +603,16 @@ Future<void> main() async {
   check(await client.queryData() == 1, 'queryData');
   client.writeQuery_({'__typename': 'Query', 'a': 5});
   check(client.readQuery_() == 5, 'readQuery_/writeQuery_ use the cache');
+  check(client.evictQuery() && client.readQuery_() == null, 'evictQuery');
+
+  // evict removes the entry for the given variables only.
+  client.writeItem(const ItemVariables(id: '1'), {'__typename': 'Query', 'item': 10});
+  client.writeItem(const ItemVariables(id: '2'), {'__typename': 'Query', 'item': 20});
+  check(client.evictItem(const ItemVariables(id: '1')), 'evictItem');
+  check(client.readItem(const ItemVariables(id: '1')) == null &&
+          client.readItem(const ItemVariables(id: '2')) == 20,
+      'other variables stay cached');
+  check(!client.evictItem(const ItemVariables(id: '1')), 'nothing to evict');
   client.writeFragment_({'__typename': 'Query', 'a': 6});
   check(client.readFragment_() == 6, 'readFragment_/writeFragment_');
   check(await client.linkData() == 1 && client.link is FakeLink,

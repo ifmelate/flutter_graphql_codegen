@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `unknown_enum_fallback`, enum fields of object types get a `<field>Raw`
   sibling with the string the server sent, so a value that parsed to
   `$unknown` can still be shown or logged
+- `evict<Operation>` on the client extension of queries removes the cached
+  result for given variables, so the next `cacheFirst` read fetches it again
 
 ### Fixed
 - An operation named like a `GraphQLClient` member (`Query`, `Mutate`,

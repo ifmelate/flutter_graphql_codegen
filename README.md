@@ -214,6 +214,7 @@ extension GetUserExtension on graphql.GraphQLClient {
   Future<User?> getUserData([Map<String, dynamic>? variables]);
   User? readGetUser(GetUserVariables variables);              // from the cache
   void writeGetUser(GetUserVariables variables, Map<String, dynamic> data);
+  bool evictGetUser(GetUserVariables variables);              // drop from the cache
 }
 ```
 
@@ -266,6 +267,13 @@ For queries, `read<Operation>` returns the cached result, typed, or null when
 it isn't cached, and `write<Operation>` puts data into the cache. Write data in
 the shape the server returns, with `__typename` on every object including the
 root.
+
+`evict<Operation>` removes the query's cached root fields for those variables,
+so the next `cacheFirst` read goes to the network (after a mutation that made
+the result stale, for example). It returns whether anything was removed. Other
+variables of the same query and the objects the result pointed to stay cached.
+Active `watchQuery` results aren't notified; call `refetch()` on them if you
+need fresh data right away.
 
 ### Variables
 
