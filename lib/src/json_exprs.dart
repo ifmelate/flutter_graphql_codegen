@@ -68,13 +68,45 @@ class JsonExprs {
 
   /// Dart type for a GraphQL output type. In legacy (non-strict) mode every
   /// level is nullable, matching previous releases.
+  ///
+  /// [named] replaces the Dart type of the named (innermost) type, e.g. with
+  /// the class generated for a selection.
   static String outputDartType(TypeNode type,
-      {required bool legacy, bool forceNullable = false}) {
+      {required bool legacy, bool forceNullable = false, String? named}) {
     final nullable = forceNullable || legacy || !type.isNonNull;
     final base = type is ListTypeNode
-        ? 'List<${outputDartType(type.type, legacy: legacy)}>'
-        : namedDartType((type as NamedTypeNode).name.value);
+        ? 'List<${outputDartType(type.type, legacy: legacy, named: named)}>'
+        : named ?? namedDartType((type as NamedTypeNode).name.value);
     return withNullability(base, nullable);
+  }
+
+  /// Expression serialising the value [v] of output [type] back into JSON
+  /// (the shape the server returns). Nullability follows [outputDartType].
+  ///
+  /// [v] is null-checked with `!` unless [promotable] (a local variable that
+  /// Dart promotes after `== null`). [composite] builds the expression for a
+  /// non-null value of the named type instead of [toJsonExpr].
+  static String outputToJsonExpr(TypeNode type, String v,
+      {required bool legacy,
+      bool forceNullable = false,
+      bool promotable = false,
+      String Function(String v)? composite}) {
+    final nullable = forceNullable || legacy || !type.isNonNull;
+    final value = nullable && !promotable ? '$v!' : v;
+    final String inner;
+    if (type is ListTypeNode) {
+      final item = outputToJsonExpr(type.type, 'e',
+          legacy: legacy, promotable: true, composite: composite);
+      inner = item == 'e' ? value : '$value.map((e) => $item).toList()';
+    } else {
+      inner = composite != null ? composite(value) : toJsonExpr(type, value);
+    }
+    if (!nullable) return inner;
+    if (inner == value) return v;
+    if (inner.startsWith('$value.')) {
+      return '$v?.${inner.substring(value.length + 1)}';
+    }
+    return '$v == null ? null : $inner';
   }
 
   static String namedDartType(String name) {
@@ -102,16 +134,22 @@ class JsonExprs {
       nullable && type != 'dynamic' ? '$type?' : type;
 
   /// Expression converting the JSON value [v] into the Dart value of [type].
+  ///
+  /// [composite] builds the expression for a non-null JSON value of the named
+  /// type instead of [namedFromJson].
   static String fromJsonExpr(TypeNode type, String v,
       {required bool legacy,
       required Set<String> definedTypes,
-      bool forceNullable = false}) {
+      bool forceNullable = false,
+      String Function(String v)? composite}) {
     final nullable = forceNullable || legacy || !type.isNonNull;
     final String inner;
     if (type is ListTypeNode) {
       final item = fromJsonExpr(type.type, 'e',
-          legacy: legacy, definedTypes: definedTypes);
+          legacy: legacy, definedTypes: definedTypes, composite: composite);
       inner = '($v as List<dynamic>).map((e) => $item).toList()';
+    } else if (composite != null) {
+      inner = composite(v);
     } else {
       inner =
           namedFromJson((type as NamedTypeNode).name.value, v, definedTypes);
