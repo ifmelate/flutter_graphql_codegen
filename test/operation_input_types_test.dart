@@ -90,13 +90,13 @@ void main() {
 
   test('toJson leaves null fields out', () {
     expect(
-        types, contains("        if (name case final value?) 'name': value,"));
+        types, contains("        if (name case final value?) 'name': value "));
     expect(
         types, contains("        'role': const RoleConverter().toJson(role),"));
     expect(
         types,
         contains("        if (page case final value?) 'page': "
-            'value.toJson(),'));
+            'value.toJson() '));
   });
 
   test('with include_null_inputs toJson writes null fields', () {
@@ -129,6 +129,90 @@ void main() {
         contains('role: identical(role, _undefined) ? _value.role : '
             'role as Role,'));
     expect('const _undefined = Object();'.allMatches(types), hasLength(1));
+  });
+
+  group('explicit null', () {
+    test('a private flag per field of a nullable GraphQL type', () {
+      expect(types, contains('  final bool _nameIsNull;'));
+      expect(types, contains('  final bool _rolesIsNull;'));
+      expect(types, isNot(contains('_roleIsNull')), reason: 'role is Role!');
+      expect(types, contains('  }) : _metaIsNull = false,'));
+    });
+
+    test('withNulls: a const factory with the typed fields', () {
+      expect(types, contains('  const factory UserFilter.withNulls({'));
+      expect(types, contains('    required Role role,\n'));
+      expect(types, contains('    List<Role>? roles,\n'));
+      expect(types, contains('  }) = UserFilter._withNulls;'));
+      expect(types, contains('    Object? name = _undefined,'));
+      expect(types, contains('    Object? roles = const <Role>[],'));
+      expect(
+          types,
+          contains('name = identical(name, _undefined) ? null : '
+              'name as String?,\n        _nameIsNull = identical(name, null)'));
+    });
+
+    test('toJson sends null only for flagged fields', () {
+      expect(
+          types,
+          contains("        if (name case final value?) 'name': value "
+              "else if (_nameIsNull) 'name': null,"));
+    });
+
+    test('== and hashCode tell explicit null from absent', () {
+      expect(types, contains('          _nameIsNull == other._nameIsNull'));
+      expect(types, contains('        _nameIsNull,\n'));
+    });
+
+    test('copyWith passes null on and keeps the state of other fields', () {
+      expect(
+          types,
+          contains('name: identical(name, _undefined) ? (_value._nameIsNull '
+              '? null : _value.name ?? _undefined) : name,'));
+      expect(types, contains('      UserFilter._withNulls(\n'));
+    });
+
+    test('fromJson: a key with null is an explicit null', () {
+      expect(
+          types,
+          contains("name: json.containsKey('name') ? (json['name'] == null "
+              '? null : '));
+      expect(
+          types,
+          contains("json['page'] as Map<String, dynamic>)) "
+              ': _undefined,'));
+    });
+
+    test('include_null_inputs: no flags, withNulls is the constructor', () {
+      CodegenConfigContext.includeNullInputs = true;
+      final out = TypeGenerator.generateTypesFile(_schema);
+      expect(out, isNot(contains('IsNull')));
+      expect(out, isNot(contains('_withNulls')));
+      expect(out, contains('  }) = UserFilter;'));
+    });
+
+    test('inputs without nullable fields get no withNulls', () {
+      final out = TypeGenerator.generateTypesFile(
+          'type Query { a(f: F): Int }\ninput F { x: Int! }');
+      expect(out, isNot(contains('withNulls')));
+      expect(out, isNot(contains('IsNull')));
+    });
+
+    test('legacy lists of non-null GraphQL lists are not flagged', () {
+      CodegenConfigContext.strictNullability = false;
+      final out = TypeGenerator.generateTypesFile(
+          'type Query { a(f: F): Int }\ninput F { x: [Int!]! y: Int }');
+      expect(out, contains('  final List<int>? x;'));
+      expect(out, isNot(contains('_xIsNull')));
+      expect(out, contains('_yIsNull'));
+    });
+
+    test('a field named identical: no flags, as without copyWith', () {
+      final out = TypeGenerator.generateTypesFile(
+          'type Query { a(f: F): Int }\ninput F { identical: Int y: Int }');
+      expect(out, isNot(contains('IsNull')));
+      expect(out, isNot(contains('withNulls')));
+    });
   });
 
   test('doc comments and deprecations as in schema result types', () {
@@ -171,7 +255,7 @@ type Query { a(f: F): Int }
 input F { other: Int value: Int copyWith: Int }
 ''');
     expect(out, contains('  bool operator ==(Object other_) =>'));
-    expect(out, contains("if (value case final value_?) 'value': value_,"));
+    expect(out, contains("if (value case final value_?) 'value': value_ "));
     // A field named copyWith takes the place of the copy getter.
     expect(out, isNot(contains('F_CopyWith')));
   });

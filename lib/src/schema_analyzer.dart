@@ -4,6 +4,7 @@ library;
 import 'package:gql/ast.dart';
 import 'code_utils.dart';
 import 'config_context.dart';
+import 'enum_settings.dart';
 import 'naming.dart';
 
 /// Utility class for analyzing GraphQL schemas
@@ -109,6 +110,8 @@ class SchemaAnalyzer {
       final String mapped;
       if (TypeRegistry.objectTypes.contains(original)) {
         mapped = dartTypeName(original);
+      } else if (EnumSettings.customType(original) case final custom?) {
+        mapped = custom;
       } else {
         // Allow scalar mapping override from config
         mapped = CodegenConfigContext.scalarMapping[original] ??

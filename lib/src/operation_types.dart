@@ -13,6 +13,7 @@ import 'package:gql/language.dart' as gql_lang;
 import 'code_utils.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
+import 'enum_settings.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
@@ -524,6 +525,8 @@ class _Context {
       names
         ..add(dart)
         ..add('${dart}Converter');
+      // A generated class named like the user type would shadow it.
+      if (EnumSettings.customType(t) case final custom?) names.add(custom);
     }
     names.addAll(TypeRegistry.inputTypes.map(SchemaAnalyzer.dartTypeName));
     return names;
@@ -1017,9 +1020,7 @@ class _Builder {
       // `<field>Raw` keeps the server's string next to `$unknown`.
       final rawType =
           def.type is ListTypeNode ? (def.type as ListTypeNode).type : def.type;
-      if (CodegenConfigContext.unknownEnumFallback &&
-          rawType is NamedTypeNode &&
-          TypeRegistry.isEnum(rawType.name.value)) {
+      if (rawType is NamedTypeNode && EnumSettings.hasRaw(rawType.name.value)) {
         field.rawName = parent?.rawName != null
             ? unique(parent!.rawName!)
             : unique(dartFieldName('${key}Raw', className: shape.name));
@@ -1139,10 +1140,14 @@ class _Emitter {
   /// string the server sent.
   String _enumToJson(_Field f, String v, String raw) {
     final type = f.type!;
-    final name = SchemaAnalyzer.dartTypeName(_namedType(type));
+    final graphqlName = _namedType(type);
+    final name = SchemaAnalyzer.dartTypeName(graphqlName);
     final converter = 'const ${name}Converter()';
     final unknown = '$name.\$unknown';
     final nullable = f.forced || ctx.legacy || !type.isNonNull;
+    if (EnumSettings.fallback(graphqlName) != null) {
+      return _fallbackEnumToJson(f, v, raw, converter, nullable);
+    }
     if (type is! ListTypeNode) {
       final known = nullable
           ? '$v == null ? null : $converter.toJson($v!)'
@@ -1155,6 +1160,29 @@ class _Emitter {
         : '$converter.toJson(e)';
     final list = '[for (final (i, e) in ${nullable ? '$v!' : v}.indexed) '
         'e == $unknown ? $raw?.elementAtOrNull(i) : $element]';
+    return nullable ? '$v == null ? null : $list' : list;
+  }
+
+  /// An enum field with a `fallback` value: the string the server sent is
+  /// written back while it still decodes to the field's value (an unknown
+  /// value kept as the fallback), otherwise the value itself.
+  String _fallbackEnumToJson(
+      _Field f, String v, String raw, String converter, bool nullable) {
+    final type = f.type!;
+    if (type is! ListTypeNode) {
+      final known = nullable
+          ? '$v == null ? null : $converter.toJson($v!)'
+          : '$converter.toJson($v)';
+      return '$raw != null && $converter.fromJson($raw!) == $v '
+          '? $raw : $known';
+    }
+    final elementNullable = ctx.legacy || !type.type.isNonNull;
+    final element = elementNullable
+        ? 'e == null ? null : $converter.toJson(e)'
+        : '$converter.toJson(e)';
+    final list = '[for (final (i, e) in ${nullable ? '$v!' : v}.indexed) '
+        '$raw?.elementAtOrNull(i) != null && '
+        '$converter.fromJson($raw![i]!) == e ? $raw![i] : $element]';
     return nullable ? '$v == null ? null : $list' : list;
   }
 
@@ -1210,8 +1238,12 @@ class _Emitter {
     return reason is StringValueNode ? reason.value : 'No longer supported';
   }
 
-  void _rawDoc(_Field f) => _out.writeln('  /// [${f.dartName}] as the server '
-      'sent it, also when it is `\$unknown`.');
+  void _rawDoc(_Field f) {
+    final fallback = EnumSettings.fallback(_namedType(f.type!));
+    _out.writeln('  /// [${f.dartName}] as the server sent it, '
+        '${fallback == null ? 'also when it is `\$unknown`' : 'also when it '
+            'was decoded as the fallback `$fallback`'}.');
+  }
 
   /// Getters of an interface or sealed class.
   void _getters(_Shape s) {

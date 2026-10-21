@@ -7,6 +7,7 @@ import 'code_utils.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
+import 'enum_settings.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
@@ -41,6 +42,7 @@ class TypeGenerator {
         DocumentUtils.mergeSchemaExtensions(gql_lang.parseString(schema));
     _checkStructure(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schemaDoc);
+    EnumSettings.validate(schemaDoc);
     _checkStrictScalars();
     _nullableConverters.clear();
     _usesEnumRaw = false;
@@ -338,9 +340,12 @@ ${_generatePossibleTypes()}
 ${_generateNullableConverters()}${_usesEnumRaw ? _enumRawHelper : ''}''';
   }
 
-  /// `import` lines for the libraries of mapped scalar types.
+  /// `import` lines for the libraries of mapped scalar and enum types.
   static String scalarImportDirectives() {
-    final uris = CodegenConfigContext.scalarImports.values.toSet().toList()
+    final uris = {
+      ...CodegenConfigContext.scalarImports.values,
+      ...EnumSettings.imports,
+    }.toList()
       ..sort();
     return uris.map((uri) => "import '$uri';\n").join();
   }
@@ -488,7 +493,8 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
     final buffer = StringBuffer();
 
     for (final definition in _sortedDefinitions(schemaDoc)) {
-      if (definition is EnumTypeDefinitionNode) {
+      if (definition is EnumTypeDefinitionNode &&
+          !EnumSettings.isCustom(definition.name.value)) {
         final enumName = SchemaAnalyzer.dartTypeName(definition.name.value);
         buffer.write(_docComment(definition.description));
         buffer.writeln('enum $enumName {');
@@ -506,7 +512,7 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
           }
           buffer.writeln('  $dartName,');
         }
-        if (CodegenConfigContext.unknownEnumFallback) {
+        if (EnumSettings.hasUnknown(definition.name.value)) {
           buffer.writeln('  /// A value added to the schema after this code '
               'was generated.');
           buffer.writeln('  \$unknown,');
@@ -525,7 +531,25 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
 
     for (final definition in _sortedDefinitions(schemaDoc)) {
       if (definition is EnumTypeDefinitionNode) {
-        final enumName = SchemaAnalyzer.dartTypeName(definition.name.value);
+        final graphqlName = definition.name.value;
+        final enumName = SchemaAnalyzer.dartTypeName(graphqlName);
+        final config = CodegenConfigContext.enumConfigs[graphqlName];
+        if (config?.type case final type?) {
+          buffer.writeln('''
+/// Converts `$graphqlName` values with `${config!.fromJson}` and `${config.toJson}`
+/// (`enums:` in graphql_codegen.yaml).
+class ${enumName}Converter extends JsonConverter<$type, String> {
+  const ${enumName}Converter();
+
+  @override
+  $type fromJson(String json) => ${config.fromJson}(json);
+
+  @override
+  String toJson($type object) => ${config.toJson}(object);
+}
+''');
+          continue;
+        }
         final values = _sortedEnumValues(definition);
         buffer.writeln(
             'class ${enumName}Converter extends JsonConverter<$enumName, String> {');
@@ -538,10 +562,13 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
           buffer.writeln(
               "      case '${value.name.value}': return $enumName.${dartEnumValueName(value.name.value)};");
         }
-        final fallback = CodegenConfigContext.unknownEnumFallback;
-        buffer.writeln(fallback
-            ? '      default: return $enumName.\$unknown;'
-            : "      default: throw ArgumentError.value(json, 'json', 'Unknown $enumName value');");
+        final fallback = EnumSettings.hasUnknown(graphqlName);
+        final valueFallback = EnumSettings.fallbackExpr(graphqlName, enumName);
+        buffer.writeln(valueFallback != null
+            ? '      default: return $valueFallback;'
+            : fallback
+                ? '      default: return $enumName.\$unknown;'
+                : "      default: throw ArgumentError.value(json, 'json', 'Unknown $enumName value');");
         buffer.writeln('    }');
         buffer.writeln('  }');
         buffer.writeln();
@@ -710,6 +737,31 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
     final withCopy = !names.contains('copyWith') && !hidesIdentical;
     final copyWith = '${className}_CopyWith';
 
+    // Null fields are left out unless include_null_inputs is on, so the
+    // server can tell "clear it" from "leave it". A field of a nullable
+    // GraphQL type passed as null to `withNulls` or `copyWith` is sent as
+    // null all the same; a private flag per field remembers that.
+    final includeNull = CodegenConfigContext.includeNullInputs;
+    final withNulls =
+        !hidesIdentical && fields.any((f) => !f.node.type.isNonNull);
+    final flags = withNulls && !includeNull;
+    final flaggedNames = {
+      if (flags)
+        for (final f in fields)
+          if (!f.node.type.isNonNull) f.name,
+    };
+    final flaggedFields = [
+      for (final f in fields)
+        if (flaggedNames.contains(f.name)) f,
+    ];
+    String flag(String name) => '_${name}IsNull';
+    String cast(String v, String type) => type == 'dynamic' ? v : '$v as $type';
+    String constructorParam(String name, String type) {
+      if (type.startsWith('List<')) return 'this.$name = const []';
+      if (type.endsWith('?') || type == 'dynamic') return 'this.$name';
+      return 'required this.$name';
+    }
+
     final buffer = StringBuffer();
     buffer.write(_docComment(node.description));
     buffer.writeln('class $className {');
@@ -719,39 +771,94 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
       buffer.write(_deprecation(f.node.directives, indent: '  '));
       buffer.writeln('  final ${f.type} ${f.name};');
     }
+    if (flags) {
+      buffer.writeln();
+      buffer.writeln('  // Whether a null field is sent as null (set by '
+          'withNulls, copyWith and fromJson).');
+      for (final f in flaggedFields) {
+        buffer.writeln('  final bool ${flag(f.name)};');
+      }
+    }
     buffer.writeln();
     buffer.writeln('  const $className({');
     for (final f in fields) {
-      if (f.type.startsWith('List<')) {
-        buffer.writeln('    this.${f.name} = const [],');
-      } else if (f.type.endsWith('?') || f.type == 'dynamic') {
-        buffer.writeln('    this.${f.name},');
-      } else {
-        buffer.writeln('    required this.${f.name},');
-      }
+      buffer.writeln('    ${constructorParam(f.name, f.type)},');
     }
-    buffer.writeln('  });');
+    if (flags) {
+      final inits = [for (final f in flaggedFields) '${flag(f.name)} = false'];
+      buffer.writeln('  }) : ${inits.join(',\n        ')};');
+    } else {
+      buffer.writeln('  });');
+    }
     buffer.writeln();
+
+    if (withNulls) {
+      buffer.writeln(includeNull
+          ? '  /// The same as [$className.new]: with include_null_inputs '
+              'every null field\n  /// is sent as `null`.'
+          : '  /// Like [$className.new], but a field passed as `null` is '
+              'sent as `null`, for\n  /// example to clear it on the '
+              'server. Fields left out are not sent.');
+      buffer.writeln('  const factory $className.withNulls({');
+      for (final f in fields) {
+        final required = !f.type.startsWith('List<') &&
+            !f.type.endsWith('?') &&
+            f.type != 'dynamic';
+        buffer
+            .writeln('    ${required ? 'required ' : ''}${f.type} ${f.name},');
+      }
+      buffer.writeln('  }) = ${flags ? '$className._withNulls' : className};');
+      buffer.writeln();
+    }
+    if (flags) {
+      buffer.writeln('  const $className._withNulls({');
+      for (final f in fields) {
+        if (!flaggedNames.contains(f.name)) {
+          buffer.writeln('    ${constructorParam(f.name, f.type)},');
+        } else if (f.type.startsWith('List<')) {
+          buffer.writeln('    Object? ${f.name} = '
+              'const <${_listElementType(f.type)}>[],');
+        } else {
+          buffer.writeln('    Object? ${f.name} = _undefined,');
+        }
+      }
+      final inits = [
+        for (final f in flaggedFields) ...[
+          '${f.name} = identical(${f.name}, _undefined) ? null : '
+              '${cast(f.name, f.type)}',
+          '${flag(f.name)} = identical(${f.name}, null)',
+        ],
+      ];
+      buffer.writeln('  }) : ${inits.join(',\n        ')};');
+      buffer.writeln();
+    }
 
     buffer
         .writeln('  factory $className.fromJson(Map<String, dynamic> json) =>');
-    buffer.writeln('      $className(');
+    buffer.writeln('      ${flags ? '$className._withNulls' : className}(');
     for (final f in fields) {
       final v = "json['${f.key}']";
       final type = f.node.type;
-      // Like json_serializable's `defaultValue`, a missing list is empty.
-      final expr = type is ListTypeNode
-          ? '$v == null ? const <${_listElementType(f.type)}>[] : '
-              '${_inputFromJson(type, v, nullable: false)}'
-          : _inputFromJson(type, v, parenthesize: false);
+      final String expr;
+      if (flaggedNames.contains(f.name)) {
+        // A key with null is an explicit null; a missing one is left out.
+        final missing = type is ListTypeNode
+            ? 'const <${_listElementType(f.type)}>[]'
+            : '_undefined';
+        expr = "json.containsKey('${f.key}') ? "
+            '${_inputFromJson(type, v, nullable: true)} : $missing';
+      } else if (type is ListTypeNode) {
+        // Like json_serializable's `defaultValue`, a missing list is empty.
+        expr = '$v == null ? const <${_listElementType(f.type)}>[] : '
+            '${_inputFromJson(type, v, nullable: false)}';
+      } else {
+        expr = _inputFromJson(type, v, parenthesize: false);
+      }
       buffer.writeln('        ${f.name}: $expr,');
     }
     buffer.writeln('      );');
     buffer.writeln();
 
-    // Null fields are left out unless include_null_inputs is on, so the
-    // server can tell "clear it" from "leave it".
-    final includeNull = CodegenConfigContext.includeNullInputs;
     buffer.writeln('  Map<String, dynamic> toJson() => {');
     for (final f in fields) {
       final type = f.node.type;
@@ -765,6 +872,10 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
             ? "        '${f.key}': ${f.name},"
             : "        '${f.key}': switch (${f.name}) "
                 '{ final $value? => $conv, null => null },');
+      } else if (flaggedNames.contains(f.name)) {
+        buffer.writeln(
+            "        if (${f.name} case final $value?) '${f.key}': $conv "
+            "else if (${flag(f.name)}) '${f.key}': null,");
       } else {
         buffer.writeln(
             "        if (${f.name} case final $value?) '${f.key}': $conv,");
@@ -788,6 +899,10 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
           ? ' &&\n          graphqlDeepEquals(${f.name}, $other.${f.name})'
           : ' &&\n          ${f.name} == $other.${f.name}');
     }
+    // An explicit null is sent, an absent field is not: they differ.
+    for (final f in flaggedFields) {
+      buffer.write(' &&\n          ${flag(f.name)} == $other.${flag(f.name)}');
+    }
     buffer.writeln(';');
     buffer.writeln();
     buffer.writeln('  @override');
@@ -797,6 +912,9 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
           ? '        graphqlDeepHash(${f.name}),'
           : '        ${f.name},');
     }
+    for (final f in flaggedFields) {
+      buffer.writeln('        ${flag(f.name)},');
+    }
     buffer.writeln('      ]);');
     buffer.writeln('}');
     buffer.writeln();
@@ -804,8 +922,12 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
     if (withCopy) {
       String param(String type) => JsonExprs.withNullability(
           type.endsWith('?') ? type.substring(0, type.length - 1) : type, true);
-      buffer.writeln('/// Copies a [$className], changing the given fields '
-          '(`null` included).');
+      buffer.writeln(flags
+          ? '/// Copies a [$className], changing the given fields. A field '
+              'set to `null` is\n/// sent as `null` (see '
+              '[$className.withNulls]).'
+          : '/// Copies a [$className], changing the given fields '
+              '(`null` included).');
       buffer.writeln('abstract class $copyWith {');
       buffer.writeln('  $className call({');
       for (final f in fields) {
@@ -825,11 +947,18 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
         buffer.writeln('    Object? ${f.name} = _undefined,');
       }
       buffer.writeln('  }) =>');
-      buffer.writeln('      $className(');
+      buffer.writeln('      ${flags ? '$className._withNulls' : className}(');
       for (final f in fields) {
-        final cast = f.type == 'dynamic' ? '' : ' as ${f.type}';
+        // A flagged field passes its state on: null (sent), the value, or
+        // _undefined (left out).
+        final keep = flaggedNames.contains(f.name)
+            ? '(_value.${flag(f.name)} ? null : '
+                '_value.${f.name} ?? _undefined)'
+            : '_value.${f.name}';
+        final passed =
+            flaggedNames.contains(f.name) ? f.name : cast(f.name, f.type);
         buffer.writeln('        ${f.name}: identical(${f.name}, _undefined) '
-            '? _value.${f.name} : ${f.name}$cast,');
+            '? $keep : $passed,');
       }
       buffer.writeln('      );');
       buffer.writeln('}');
@@ -1063,9 +1192,8 @@ class $unknownName implements $name {
   /// field's JSON key and never written back.
   static String _rawEnumField(_Field field, List<_Field> fields,
       {required String className}) {
-    if (!CodegenConfigContext.unknownEnumFallback) return '';
     final graphqlBase = getOriginalGraphQLType(field.type);
-    if (!TypeRegistry.isEnum(graphqlBase)) return '';
+    if (!EnumSettings.hasRaw(graphqlBase)) return '';
     var type = field.type;
     if (type is ListTypeNode) {
       type = type.type;
@@ -1076,8 +1204,12 @@ class $unknownName implements $name {
     if (fields.any((f) => f.name == rawName)) return '';
     _usesEnumRaw = true;
     final dartType = field.type is ListTypeNode ? 'List<String?>?' : 'String?';
+    final fallback = EnumSettings.fallback(graphqlBase);
+    final when = fallback == null
+        ? 'also when it is `\$unknown`'
+        : 'also when it was decoded as the fallback `$fallback`';
     return """
-  /// [${dartFieldName(field.name, className: className)}] as the server sent it, also when it is `\$unknown`.
+  /// [${dartFieldName(field.name, className: className)}] as the server sent it, $when.
   @JsonKey(name: '${field.name}#raw', readValue: _enumRaw, includeToJson: false)
   $dartType ${dartFieldName(rawName, className: className)};
 """;
@@ -1181,7 +1313,10 @@ Object? _enumRaw(Map<dynamic, dynamic> json, String key) =>
       // into a value, so nullable elements get a wrapper that keeps null.
       var elementConverter = mappedConverter;
       if (elementConverter == null) {
-        final converter = _scalarConverter(graphqlBase, baseType);
+        // json_serializable can't decode an enum mapped to a user type.
+        final converter = EnumSettings.isCustom(graphqlBase)
+            ? '${SchemaAnalyzer.dartTypeName(graphqlBase)}Converter'
+            : _scalarConverter(graphqlBase, baseType);
         if (converter != null) {
           elementConverter = fieldType.contains('$baseType?')
               ? _nullableConverter(converter, baseType)
@@ -1195,10 +1330,13 @@ Object? _enumRaw(Map<dynamic, dynamic> json, String key) =>
         ];
       }
       // Regular lists (enums, objects, built-in scalars): default value only
-      final unknownArg = CodegenConfigContext.unknownEnumFallback &&
-              TypeRegistry.isEnum(graphqlBase)
-          ? ', unknownEnumValue: $cleanInnerType.\$unknown'
-          : '';
+      final valueFallback =
+          EnumSettings.fallbackExpr(graphqlBase, cleanInnerType);
+      final unknownArg = valueFallback != null
+          ? ', unknownEnumValue: $valueFallback'
+          : EnumSettings.hasUnknown(graphqlBase)
+              ? ', unknownEnumValue: $cleanInnerType.\$unknown'
+              : '';
       return [
         '  @JsonKey(${nameArg}defaultValue: const <$cleanInnerType>[]$unknownArg)'
       ];
@@ -1215,7 +1353,8 @@ Object? _enumRaw(Map<dynamic, dynamic> json, String key) =>
     }
     if (baseType == 'LocalDate') return withName('  @LocalDateConverter()');
     if (TypeRegistry.isEnum(graphqlBase)) {
-      return withName('  @${baseType}Converter()');
+      return withName(
+          '  @${SchemaAnalyzer.dartTypeName(graphqlBase)}Converter()');
     }
     // Safe converters for non-nullable primitives
     if (baseType == 'bool' && !isNullable) {
