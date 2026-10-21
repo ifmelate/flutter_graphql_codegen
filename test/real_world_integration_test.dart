@@ -2,12 +2,17 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:flutter_graphql_codegen/src/config.dart';
 import 'package:flutter_graphql_codegen/src/schema_downloader.dart';
+import 'package:flutter_graphql_codegen/src/config_context.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 import 'package:flutter_graphql_codegen/src/generator.dart';
 import 'package:flutter_graphql_codegen/src/utils.dart';
 import 'package:path/path.dart' as path;
 
 void main() {
+  // Covers the json_serializable classes of `result_types: schema`.
+  setUp(() => CodegenConfigContext.resultTypes = 'schema');
+  tearDown(CodegenConfigContext.reset);
+
   group('Real World Integration Tests', () {
     late String testDir;
     late String configPath;

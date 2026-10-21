@@ -63,6 +63,7 @@ void main() {
 
   test('generates every operation of a document, using external fragments',
       () async {
+    CodegenConfigContext.resultTypes = 'schema';
     await run({
       'a|lib/graphql/fragments.graphql':
           'fragment UserBits on User { id name }',
@@ -88,6 +89,20 @@ query GetVersion { version }
     final index = output('index.dart')!;
     expect(index, contains("export 'get_user_graphql.g.dart';"));
     expect(index, contains("export 'rename_graphql.g.dart';"));
+  });
+
+  test('operation result types: types.dart keeps inputs, no result classes',
+      () async {
+    await run({
+      'a|lib/schema.graphql': '$_schema\ninput UserFilter { name: String }',
+      'a|lib/graphql/a.graphql': 'query GetVersion { version }',
+    });
+    expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    final types = output('types.dart')!;
+    expect(types, isNot(contains('class User ')));
+    expect(types, contains('class UserFilter {'));
+    expect(types, isNot(contains('@JsonSerializable')));
+    expect(types, isNot(contains('types.g.dart')));
   });
 
   test('writes dart-formatted files', () async {

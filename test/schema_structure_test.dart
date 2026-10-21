@@ -40,6 +40,7 @@ type Query { user: User }
   });
 
   test('fields added by extensions count', () {
+    CodegenConfigContext.resultTypes = 'schema';
     expect(
       TypeGenerator.generateTypesFile('''
 type Query

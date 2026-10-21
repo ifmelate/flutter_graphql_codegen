@@ -1,7 +1,12 @@
 import 'package:test/test.dart';
+import 'package:flutter_graphql_codegen/src/config_context.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 
 void main() {
+  // Covers the json_serializable classes of `result_types: schema`.
+  setUp(() => CodegenConfigContext.resultTypes = 'schema');
+  tearDown(CodegenConfigContext.reset);
+
   group('Integration Tests - Safe Converters with Real Data', () {
     test('should handle CategoryDTO with null values correctly', () {
       final schema = '''

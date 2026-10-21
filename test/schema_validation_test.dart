@@ -8,6 +8,8 @@ void main() {
     setUp(() {
       TypeRegistry.clear();
       CodegenConfigContext.strictNullability = true;
+      // Covers the json_serializable classes of `result_types: schema`.
+      CodegenConfigContext.resultTypes = 'schema';
     });
 
     tearDown(() {
