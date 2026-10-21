@@ -121,7 +121,7 @@ Future<void> main() async {
   final plain = UpdateVariables(id: '1', patch: patch);
   final json = plain.toJson();
   check(json.containsKey('tag') == nulls, 'null variable');
-  check(!json.containsKey('limit'), 'variable with a default left out');
+  check(json['limit'] == 5, 'variable with a default sent with it');
   final explicit = UpdateVariables.withNulls(
       id: '1', patch: patch, tag: null, limit: null);
   final explicitJson = explicit.toJson();
@@ -130,8 +130,8 @@ Future<void> main() async {
   check(explicitJson.containsKey('limit') && explicitJson['limit'] == null,
       'withNulls sends null for a variable with a default');
   final absent = UpdateVariables.withNulls(id: '1', patch: patch).toJson();
-  check(!absent.containsKey('limit') && absent.containsKey('tag') == nulls,
-      'withNulls leaves out what is not passed');
+  check(absent['limit'] == 5 && absent.containsKey('tag') == nulls,
+      'withNulls leaves out what is not passed (a default is sent)');
 
   // copyWith.
   final cleared = plain.copyWith(limit: null);
@@ -166,7 +166,7 @@ Future<void> main() async {
   final sent = requests.last.variables;
   check(sent.containsKey('tag') && sent['tag'] == null, 'null on the wire');
   await client.updateData(plain.toJson());
-  check(!requests.last.variables.containsKey('limit'), 'absent on the wire');
+  check(requests.last.variables['limit'] == 5, 'default on the wire');
   print('NULLS OK');
 }
 ''';
@@ -175,8 +175,9 @@ const _inputChecks = r'''
   // Inputs: X(b: null) leaves b out (unless include_null_inputs).
   const plainPatch = Patch(id: '1', name: null);
   check(plainPatch.toJson().containsKey('name') == nulls, 'X(b: null)');
-  check(graphqlDeepEquals(plainPatch.toJson()['tags'], []),
-      'lists still default to empty');
+  check(plainPatch.toJson().containsKey('tags') == nulls &&
+          plainPatch.toJson()['tags'] == null,
+      'a nullable list defaults to null');
 
   // withNulls: a null argument is sent, an omitted one is not.
   const withNull = Patch.withNulls(id: '1', name: null, tags: null);
@@ -186,8 +187,8 @@ const _inputChecks = r'''
   check(withNullJson.containsKey('tags') && withNullJson['tags'] == null,
       'explicit null list sent');
   check(withNullJson.containsKey('note') == nulls, 'absent field left out');
-  check(graphqlDeepEquals(const Patch.withNulls(id: '1').toJson()['tags'], []),
-      'withNulls keeps the list default');
+  check(const Patch.withNulls(id: '1').toJson().containsKey('tags') == nulls,
+      'withNulls leaves an unset list out');
   check(identical(const Patch.withNulls(id: '1', name: null),
           const Patch.withNulls(id: '1', name: null)),
       'withNulls is const');
