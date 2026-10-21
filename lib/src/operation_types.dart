@@ -133,7 +133,10 @@ class OperationTypes {
   }
 
   /// Names of the fragments with generated declarations, sorted.
-  List<String> get fragmentNames => _ctx.fragments.keys.toList()..sort();
+  ///
+  /// Fragments on introspection types (`__Type`, ...) have none: the
+  /// fields selecting them (`__schema`, `__type`) are raw JSON maps.
+  List<String> get fragmentNames => _ctx.declaredFragments;
 
   /// Interface declarations of fragment [name] (the interface, its nested
   /// interfaces and its type-specific interfaces).
@@ -499,10 +502,18 @@ class _Context {
 
   _FragmentFile get fragmentFile => _fragmentFile ??= _FragmentFile(this);
 
+  /// Fragments that get declarations in `fragments.dart`, sorted: all but
+  /// those on introspection types, which only appear inside `__schema` /
+  /// `__type` selections (raw JSON maps).
+  late final List<String> declaredFragments = [
+    for (final MapEntry(:key, :value) in fragments.entries)
+      if (!value.typeCondition.on.name.value.startsWith('__')) key,
+  ]..sort();
+
   /// Names declared in `fragments.dart` that an operation named [pascal]
   /// could also declare (all of its names start with [pascal]).
   Set<String> fragmentFileNamesNear(String pascal) {
-    final near = fragments.keys.where((f) {
+    final near = declaredFragments.where((f) {
       final name = fragmentClassName(f);
       return pascal.startsWith(name) || name.startsWith(pascal);
     });
@@ -514,7 +525,7 @@ class _Context {
 /// Everything declared in `fragments.dart`.
 class _FragmentFile {
   _FragmentFile(_Context ctx) {
-    final sorted = ctx.fragments.keys.toList()..sort();
+    final sorted = ctx.declaredFragments;
     final owners = <String, String>{};
     void collect(_Shape shape, String fragment) {
       for (final name in [

@@ -261,6 +261,25 @@ void main() {
               isA<CodegenException>().having((e) => e.code, 'code', 'BLD102')));
     });
 
+    test('fragments on introspection types are skipped', () {
+      const fullType = 'fragment FullType on __Type { name kind '
+          'fields { name } ...TypeRef }\n'
+          'fragment TypeRef on __Type { name ofType { name } }';
+      final code = _fragments('$fullType\n$bits')!;
+      expect(code, isNot(contains('FullType')));
+      expect(code, isNot(contains('TypeRef')));
+      expect(code, contains('abstract interface class UserBits {'));
+      // Only introspection fragments: no fragments.dart at all.
+      expect(_fragments(fullType), isNull);
+      // Operations using them keep their raw JSON result.
+      final op = _op('query Introspect { __schema { types { ...FullType } } }',
+          'Introspect',
+          fragments: fullType);
+      expect(op, contains('Map<String, dynamic>? parseIntrospectData('));
+      expect(op, contains('fragment FullType on __Type'));
+      expect(op, isNot(contains("import 'fragments.dart';")));
+    });
+
     test('fragments on the root type have no typename', () {
       final code = _fragments('fragment Root on Query { version }')!;
       final root =

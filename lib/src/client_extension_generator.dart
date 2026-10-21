@@ -56,7 +56,8 @@ $body''';
 
   /// Generates `fragments.dart`: for every fragment its document, an
   /// interface with its fields (implemented by the operation classes that
-  /// spread it) and a data class. Returns null when there are no fragments.
+  /// spread it) and a data class. Fragments on introspection types are left
+  /// out. Returns null when no fragment is left.
   static String? generateFragmentsFile(
     DocumentNode schemaDoc,
     Map<String, FragmentDefinitionNode> fragments,
@@ -65,6 +66,7 @@ $body''';
     final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
     final types = OperationTypes(schema, fragments);
+    if (types.fragmentNames.isEmpty) return null;
     types.checkFragments();
 
     final buffer = StringBuffer()
