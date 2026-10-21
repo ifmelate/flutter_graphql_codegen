@@ -11,6 +11,7 @@ import 'document_utils.dart';
 import 'document_validator.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
+import 'operation_groups.dart';
 import 'operation_types.dart';
 import 'schema_analyzer.dart';
 import 'type_generator.dart';
@@ -22,6 +23,9 @@ class ClientExtensionGenerator {
   ///
   /// [sourcePath] is recorded in the header so the builder can tell which
   /// document a file was generated from.
+  ///
+  /// With a [group] (`group_operations: directory`) the file also adds the
+  /// operation's methods to the group's class.
   static String generateOperationFile(
     String operationName,
     String operationType,
@@ -30,6 +34,7 @@ class ClientExtensionGenerator {
     Set<String> definedTypes, {
     Map<String, FragmentDefinitionNode> fragments = const {},
     String? sourcePath,
+    OperationGroup? group,
   }) {
     final operation = _findOperation(
         gql_lang.parseString(operationDocumentContent), operationName);
@@ -40,17 +45,18 @@ class ClientExtensionGenerator {
       schemaDoc,
       definedTypes,
       fragments: fragments,
+      group: group,
     );
     final ignores = CodegenConfigContext.operationResultTypes
         ? 'unused_import, deprecated_member_use_from_same_package'
         : 'unused_import';
     return '''${CodeGenerationConstants.generatedFileWarning}
 // Operation: $operationName (${operation.type.name})
-${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, $ignores
+${sourcePath == null ? '' : '// Source: $sourcePath\n'}${group == null ? '' : '${group.operationHeader}\n'}${CodeGenerationConstants.ignoreForFile}, $ignores
 
 import 'package:graphql/client.dart' as graphql;
 import 'package:normalize/utils.dart' as normalize;
-${usesFragments ? "import 'fragments.dart';\n" : ''}import 'types.dart';
+${usesFragments ? "import 'fragments.dart';\n" : ''}${group == null ? '' : "import '${group.fileName}';\n"}import 'types.dart';
 $scalarImports
 $body''';
   }
@@ -243,6 +249,7 @@ ${request(writeIdFields)},
     DocumentNode schemaDoc,
     Set<String> definedTypes, {
     Map<String, FragmentDefinitionNode> fragments = const {},
+    OperationGroup? group,
   }) {
     final operationDoc = gql_lang.parseString(operationDocumentContent);
     final operation = _findOperation(operationDoc, operationName);
@@ -288,6 +295,7 @@ ${request(writeIdFields)},
         : _generateTypedParser(context, classes));
     buffer.writeln(_generateOptions(context));
     buffer.write(_generateExtension(context));
+    if (group != null) buffer.write(_generateGroupExtension(context, group));
     return (buffer.toString(), classes?.usesFragments ?? false);
   }
 
@@ -554,6 +562,72 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
   static String _extensionMember(String name) =>
       _clientMemberNames.contains(name) ? '${name}_' : name;
 
+  /// Names of the members of `GraphQLClient` itself.
+  static Set<String> get clientMemberNames => _clientMemberNames;
+
+  /// Names of the `GraphQLClient` extension methods of operation
+  /// [operationName] of type [operationType] (`query`, `mutation` or
+  /// `subscription`).
+  static Set<String> operationMemberNames(
+      String operationName, String operationType) {
+    final camel = operationName.toCamelCase();
+    final pascal = operationName.capitalize();
+    return {
+      _extensionMember(camel),
+      _extensionMember('${camel}Data'),
+      if (operationType == 'query') ...[
+        _extensionMember('read$pascal'),
+        _extensionMember('write$pascal'),
+        _extensionMember('evict$pascal'),
+      ],
+    };
+  }
+
+  /// Members of the group class itself; an operation method with one of
+  /// these names gets a trailing underscore in the group.
+  static const _groupMemberNames = {'client'};
+
+  /// The extension adding the methods of the operation to the class of its
+  /// [group]; each delegates to the `GraphQLClient` extension method of the
+  /// same name.
+  static String _generateGroupExtension(
+      _OperationContext ctx, OperationGroup group) {
+    final buffer = StringBuffer()
+      ..writeln()
+      ..writeln('/// `${ctx.name}` in the operations of `${group.path}` '
+          '([${group.className}]).')
+      ..writeln('extension ${OperationGroup.operationExtension(ctx.name)} '
+          'on ${group.className} {');
+    void member(String returnType, String flat, String params, String args) {
+      final name = _groupMemberNames.contains(flat) ? '${flat}_' : flat;
+      buffer
+        ..writeln('  /// Same as [${ctx.name}Extension.$flat].')
+        ..writeln('  $returnType $name($params) => client.$flat($args);')
+        ..writeln();
+    }
+
+    final camel = ctx.camel;
+    const vars = '[Map<String, dynamic>? variables]';
+    const raw = 'graphql.QueryResult<Map<String, dynamic>>';
+    final stream = ctx.operation.type == OperationType.subscription;
+    String wrap(String t) => stream ? 'Stream<$t>' : 'Future<$t>';
+    member(wrap(raw), _extensionMember(camel), vars, 'variables');
+    member(wrap(ctx.returnType), _extensionMember('${camel}Data'), vars,
+        'variables');
+    if (ctx.operation.type == OperationType.query) {
+      final s = _cacheSignatures(ctx);
+      final pascal = ctx.pascal;
+      member(s.readType, _extensionMember('read$pascal'), s.readParams,
+          s.readArgs);
+      member(
+          'void', _extensionMember('write$pascal'), s.writeParams, s.writeArgs);
+      member(
+          'bool', _extensionMember('evict$pascal'), s.evictParams, s.evictArgs);
+    }
+    buffer.writeln('}');
+    return buffer.toString();
+  }
+
   // ---------------------------------------------------------------------------
   // Typed options and cache helpers
   // ---------------------------------------------------------------------------
@@ -651,35 +725,67 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
     return buffer.toString();
   }
 
-  /// `read*` / `write*` methods for the normalized cache of a query.
-  static String _generateCacheHelpers(_OperationContext ctx) {
+  /// Parameters of the `read*` / `write*` / `evict*` methods of a query, the
+  /// arguments forwarding them to methods with the same parameters, and the
+  /// arguments of its options function.
+  static ({
+    String readType,
+    String readParams,
+    String readArgs,
+    String writeParams,
+    String writeArgs,
+    String evictParams,
+    String evictArgs,
+    String optionsArgs,
+  }) _cacheSignatures(_OperationContext ctx) {
     final vars = '${ctx.pascal}Variables';
     final t =
         ctx.returnType.endsWith('?') ? ctx.returnType : '${ctx.returnType}?';
-    final options = '${ctx.camel}QueryOptions';
-    final classes = ctx.classes;
-    final data = classes?.writeType ?? 'Map<String, dynamic>';
-    final (readParams, writeParams, evictParams, args) =
-        switch (ctx.variablesKind) {
+    final data = ctx.classes?.writeType ?? 'Map<String, dynamic>';
+    return switch (ctx.variablesKind) {
       _VariablesKind.required => (
-          '$vars variables, {bool optimistic = true}',
-          '$vars variables, $data data, {bool broadcast = true}',
-          '$vars variables',
-          'variables',
+          readType: t,
+          readParams: '$vars variables, {bool optimistic = true}',
+          readArgs: 'variables, optimistic: optimistic',
+          writeParams: '$vars variables, $data data, {bool broadcast = true}',
+          writeArgs: 'variables, data, broadcast: broadcast',
+          evictParams: '$vars variables',
+          evictArgs: 'variables',
+          optionsArgs: 'variables',
         ),
       _VariablesKind.optional => (
-          '{$vars? variables, bool optimistic = true}',
-          '$data data, {$vars? variables, bool broadcast = true}',
-          '{$vars? variables}',
-          'variables: variables',
+          readType: t,
+          readParams: '{$vars? variables, bool optimistic = true}',
+          readArgs: 'variables: variables, optimistic: optimistic',
+          writeParams: '$data data, {$vars? variables, bool broadcast = true}',
+          writeArgs: 'data, variables: variables, broadcast: broadcast',
+          evictParams: '{$vars? variables}',
+          evictArgs: 'variables: variables',
+          optionsArgs: 'variables: variables',
         ),
       _VariablesKind.none => (
-          '{bool optimistic = true}',
-          '$data data, {bool broadcast = true}',
-          '',
-          '',
+          readType: t,
+          readParams: '{bool optimistic = true}',
+          readArgs: 'optimistic: optimistic',
+          writeParams: '$data data, {bool broadcast = true}',
+          writeArgs: 'data, broadcast: broadcast',
+          evictParams: '',
+          evictArgs: '',
+          optionsArgs: '',
         ),
     };
+  }
+
+  /// `read*` / `write*` methods for the normalized cache of a query.
+  static String _generateCacheHelpers(_OperationContext ctx) {
+    final options = '${ctx.camel}QueryOptions';
+    final classes = ctx.classes;
+    final s = _cacheSignatures(ctx);
+    final t = s.readType;
+    final readParams = s.readParams;
+    final writeParams = s.writeParams;
+    final evictParams = s.evictParams;
+    final args = s.optionsArgs;
     final write = classes == null
         ? '''
   /// Writes raw `data` for `${ctx.name}` into the cache, shaped as the server
