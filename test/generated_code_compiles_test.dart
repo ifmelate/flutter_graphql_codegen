@@ -1392,6 +1392,137 @@ void main() {
 }
 ''';
 
+// read<Fragment>Fragment / write<Fragment>Fragment and a fragment on an
+// introspection type.
+const _fragsSchema = r'''
+interface Node { id: ID! }
+type User implements Node { id: ID! name: String! friends(first: Int): [User!]! }
+type Post implements Node { id: ID! title: String! }
+type Query { user(id: ID!): User node(id: ID!): Node }
+''';
+
+const _fragsDocuments = [
+  r'''
+fragment UserBits on User { id name }
+fragment UserFriends on User { id friends(first: $n) { id name } }
+fragment NodeBits on Node { id ... on User { name } ... on Post { title } }
+fragment FullType on __Type { name kind }
+''',
+  r'''
+query GetUser($id: ID!) { user(id: $id) { ...UserBits } }
+query GetFriends($id: ID!, $n: Int) { user(id: $id) { ...UserFriends } }
+query GetNode($id: ID!) { node(id: $id) { ...NodeBits } }
+query Introspect { __schema { types { ...FullType } } }
+''',
+];
+
+const _fragsMain = r'''
+import 'package:fgc_compile_check/frags/GetFriends.g.dart';
+import 'package:fgc_compile_check/frags/GetNode.g.dart';
+import 'package:fgc_compile_check/frags/GetUser.g.dart';
+import 'package:fgc_compile_check/frags/Introspect.g.dart';
+import 'package:fgc_compile_check/frags/fragments.dart';
+import 'package:fgc_compile_check/frags/types.dart';
+import 'package:graphql/client.dart';
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: $message');
+}
+
+class NoLink extends Link {
+  @override
+  Stream<Response> request(Request request, [NextLink? forward]) =>
+      throw UnsupportedError('cache only');
+}
+
+void main() {
+  final client = GraphQLClient(
+    link: NoLink(),
+    cache: GraphQLCache(possibleTypes: possibleTypes),
+  );
+
+  // Not cached.
+  check(client.readUserBitsFragment({'id': '1'}) == null, 'cache miss');
+
+  // An object from an operation, written through the fragment.
+  const vars = GetUserVariables(id: '1');
+  final user = parseGetUserData({
+    'user': {'__typename': 'User', 'id': '1', 'name': 'Ann'},
+  })!;
+  client.writeGetUser(vars, user);
+  client.writeUserBitsFragment({'id': '1'}, user.copyWith(name: 'Ann 2'));
+  final bits = client.readUserBitsFragment({'id': '1'});
+  check(bits == const UserBitsData(typename: 'User', id: '1', name: 'Ann 2'),
+      'fragment read back');
+  check(client.readGetUser(vars) == user.copyWith(name: 'Ann 2'),
+      'operation sees the fragment write');
+  // __typename given explicitly works too.
+  check(client.readUserBitsFragment({'__typename': 'User', 'id': '1'}) == bits,
+      'explicit __typename');
+
+  // Data classes can be written as well.
+  const cy = UserBitsData(typename: 'User', id: '3', name: 'Cy');
+  client.writeUserBitsFragment({'id': '3'}, cy);
+  check(client.readUserBitsFragment({'id': '3'}) == cy, 'data class round trip');
+
+  // Variables in fragment arguments.
+  final friends = parseGetFriendsData({
+    'user': {
+      '__typename': 'User',
+      'id': '1',
+      'friends': [
+        {'__typename': 'User', 'id': '2', 'name': 'Bob'},
+      ],
+    },
+  })!;
+  client.writeUserFriendsFragment({'id': '1'}, friends, variables: {'n': 1});
+  final read = client.readUserFriendsFragment({'id': '1'}, variables: {'n': 1});
+  check(read != null && read.friends.single.name == 'Bob', 'with variables');
+  check(read == UserFriendsData.fromJson(friends.toJson()), 'equal data');
+  check(client.readUserFriendsFragment({'id': '1'}, variables: {'n': 2}) == null,
+      'other variables are not cached');
+  // user(id: "1") is cached by writeGetUser above.
+  check(
+      client
+              .readGetFriends(const GetFriendsVariables(id: '1', n: 1))!
+              .friends
+              .single
+              .name ==
+          'Bob',
+      'operation reads the fragment write');
+
+  // Fragment on an interface: __typename comes from the data on write and
+  // is required on read.
+  final post = parseGetNodeData({
+    'node': {'__typename': 'Post', 'id': 'p', 'title': 'T'},
+  })!;
+  client.writeNodeBitsFragment({'id': 'p'}, post);
+  final node = client.readNodeBitsFragment({'__typename': 'Post', 'id': 'p'});
+  check(node is NodeBitsData_OnPost && node.title == 'T', 'abstract variant');
+  check(node == NodeBitsData.fromJson(post.toJson()), 'abstract equality');
+  var threw = false;
+  try {
+    client.readNodeBitsFragment({'id': 'p'});
+  } on ArgumentError {
+    threw = true;
+  }
+  check(threw, 'abstract read needs __typename');
+  check(client.readNodeBitsFragment({'__typename': 'User', 'id': 'p'}) == null,
+      'other type not cached');
+
+  // Fragments on introspection types: the result stays raw JSON.
+  final schema = parseIntrospectData({
+    '__schema': {
+      'types': [
+        {'name': 'User', 'kind': 'OBJECT'},
+      ],
+    },
+  });
+  check(schema!['types'][0]['name'] == 'User', 'introspection data');
+  print('FRAGS OK');
+}
+''';
+
 void main() {
   test('generated code compiles and works', () async {
     final fixtureDir = p.join('test', 'fixtures');
@@ -1501,6 +1632,10 @@ void main() {
       'bin/ops.dart': _opsMain,
       'bin/ops_legacy.dart': _opsLegacyMain,
       'bin/ops_fallback.dart': _opsFallbackMain,
+      ..._generate('frags', _fragsSchema, _fragsDocuments, strict: true),
+      ..._generate('frags_legacy', _fragsSchema, _fragsDocuments,
+          strict: false),
+      'bin/frags.dart': _fragsMain,
       ..._generate('legacy_ops', schema, documents, strict: false),
       ..._generate('strict_ops', schema, documents, strict: true),
       ..._generate('smoke_ops', _smokeSchema, _smokeDocuments, strict: true),
@@ -1534,6 +1669,9 @@ void main() {
       'bin/nulls_default.dart': _nullsMain('nulls_default', sendsNulls: false),
     };
 
+    // Fragments on introspection types get no declarations.
+    expect(files['lib/frags/fragments.dart'], isNot(contains('FullType')));
+
     // Operation result types need no json_serializable output.
     for (final entry in files.entries) {
       if (entry.key.startsWith('lib/op_types')) {
@@ -1560,6 +1698,7 @@ void main() {
         'bin/ops.dart',
         'bin/ops_legacy.dart',
         'bin/ops_fallback.dart',
+        'bin/frags.dart',
         'bin/edge_ops.dart',
         'bin/mapped_ops.dart',
         'bin/nulls_ops.dart',

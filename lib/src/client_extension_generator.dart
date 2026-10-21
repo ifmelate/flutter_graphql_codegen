@@ -56,8 +56,9 @@ $body''';
 
   /// Generates `fragments.dart`: for every fragment its document, an
   /// interface with its fields (implemented by the operation classes that
-  /// spread it) and a data class. Fragments on introspection types are left
-  /// out. Returns null when no fragment is left.
+  /// spread it), a data class and `read<Fragment>Fragment` /
+  /// `write<Fragment>Fragment` cache methods. Fragments on introspection
+  /// types are left out. Returns null when no fragment is left.
   static String? generateFragmentsFile(
     DocumentNode schemaDoc,
     Map<String, FragmentDefinitionNode> fragments,
@@ -92,10 +93,108 @@ $body''';
         ..writeln("const String ${camel}FragmentName = '$name';")
         ..writeln()
         ..write(types.fragmentInterfaces(name))
-        ..write(types.fragmentData(name));
+        ..write(types.fragmentData(name))
+        ..write(_fragmentCacheExtension(types, name));
     }
     buffer.write(types.support);
     return buffer.toString();
+  }
+
+  /// `read<Fragment>Fragment` / `write<Fragment>Fragment` on
+  /// `GraphQLClient` for fragment [name].
+  ///
+  /// `normalize` identifies the object from `idFields` plus a `__typename`
+  /// that defaults to the fragment's type condition. That default is right
+  /// for a fragment on an object type, but names no cached object for one
+  /// on an interface or union, so there `__typename` must be given (read)
+  /// or is taken from the data (write).
+  static String _fragmentCacheExtension(OperationTypes types, String name) {
+    final camel = name.toCamelCase();
+    final pascal = name.capitalize();
+    final type = types.fragmentType(name);
+    final abstract = TypeRegistry.isAbstract(type);
+    final data = types.fragmentDataClass(name);
+    final iface = types.fragmentInterfaceName(name);
+    final read = _extensionMember('read${pascal}Fragment');
+    final write = _extensionMember('write${pascal}Fragment');
+
+    String request(String idFields) => '''
+      graphql.FragmentRequest(
+        fragment: graphql.Fragment(
+          document: ${camel}Fragment,
+          fragmentName: ${camel}FragmentName,
+        ),
+        idFields: $idFields,
+        variables: variables ?? const {},
+      )''';
+
+    final String readIdFields;
+    final String readCheck;
+    final String writeIdFields;
+    final String idDoc;
+    final String writeIdDoc;
+    if (abstract) {
+      readIdFields = 'idFields';
+      readCheck = '''
+    if (!idFields.containsKey('__typename')) {
+      throw ArgumentError.value(idFields, 'idFields',
+          'needs "__typename": $name is on the abstract type $type');
+    }
+''';
+      writeIdFields = "{'__typename': data.typename, ...idFields}";
+      idDoc = '''
+  /// [idFields] identify the object (usually `id`) and must include its
+  /// `__typename`, since `$type` is abstract.''';
+      writeIdDoc = '''
+  /// [idFields] identify the object (usually `id`); `__typename` defaults to
+  /// `data.typename`.''';
+    } else {
+      readIdFields = writeIdFields = "{'__typename': '$type', ...idFields}";
+      readCheck = '';
+      idDoc = writeIdDoc = '''
+  /// [idFields] identify the object (usually `{'id': ...}`); `__typename`
+  /// defaults to `$type`.''';
+    }
+
+    return '''
+/// Cache access for the `$name` fragment.
+extension ${pascal}FragmentExtension on graphql.GraphQLClient {
+  /// Reads the `$name` fragment of an object from the cache; null when it
+  /// isn't cached (or only partly).
+  ///
+$idDoc
+  $data? $read(
+    Map<String, dynamic> idFields, {
+    Map<String, dynamic>? variables,
+    bool optimistic = true,
+  }) {
+$readCheck    final Map<String, dynamic>? json = this.readFragment(
+${request(readIdFields)},
+      optimistic: optimistic,
+    );
+    return json == null ? null : $data.fromJson(json);
+  }
+
+  /// Writes [data] as the `$name` fragment of an object into the cache.
+  /// Any object implementing [$iface] can be written, such as one returned
+  /// by an operation that spreads the fragment.
+  ///
+$writeIdDoc
+  void $write(
+    Map<String, dynamic> idFields,
+    $iface data, {
+    Map<String, dynamic>? variables,
+    bool broadcast = true,
+  }) {
+    this.writeFragment(
+${request(writeIdFields)},
+      data: data.toJson(),
+      broadcast: broadcast,
+    );
+  }
+}
+
+''';
   }
 
   /// Generates the client code for a GraphQL operation: the document constant,

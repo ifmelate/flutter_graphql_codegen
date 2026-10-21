@@ -261,6 +261,43 @@ void main() {
               isA<CodegenException>().having((e) => e.code, 'code', 'BLD102')));
     });
 
+    test('fragments get typed cache methods on GraphQLClient', () {
+      final code = _fragments(bits)!;
+      expect(
+          code,
+          contains('extension UserBitsFragmentExtension '
+              'on graphql.GraphQLClient {'));
+      expect(code, contains('  UserBitsData? readUserBitsFragment(\n'));
+      expect(code, contains('  void writeUserBitsFragment(\n'));
+      expect(code, contains('    UserBits data, {\n'));
+      expect(code, contains('document: userBitsFragment,'));
+      expect(code, contains('fragmentName: userBitsFragmentName,'));
+      // Object type: __typename defaults to it on read and write.
+      expect(
+          RegExp(RegExp.escape("idFields: {'__typename': 'User', ...idFields}"))
+              .allMatches(code),
+          hasLength(2));
+      expect(code, contains('data: data.toJson(),'));
+      expect(code, contains('variables: variables ?? const {},'));
+      expect(code, isNot(contains('ArgumentError')));
+    });
+
+    test('fragments on abstract types need __typename on read', () {
+      final code = _fragments('fragment NodeBits on Node { id }')!;
+      expect(code, contains('  NodeBitsData? readNodeBitsFragment(\n'));
+      expect(code, contains("if (!idFields.containsKey('__typename')) {"));
+      expect(code, contains('throw ArgumentError.value('));
+      expect(code,
+          contains("idFields: {'__typename': data.typename, ...idFields},"));
+    });
+
+    test('fragment cache methods are named after the GraphQL name', () {
+      final code = _fragments('fragment userBits on User { id }')!;
+      expect(code, contains('extension UserBitsFragmentExtension'));
+      expect(code, contains('readUserBitsFragment('));
+      expect(code, contains('writeUserBitsFragment('));
+    });
+
     test('fragments on introspection types are skipped', () {
       const fullType = 'fragment FullType on __Type { name kind '
           'fields { name } ...TypeRef }\n'

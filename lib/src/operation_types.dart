@@ -138,6 +138,10 @@ class OperationTypes {
   /// fields selecting them (`__schema`, `__type`) are raw JSON maps.
   List<String> get fragmentNames => _ctx.declaredFragments;
 
+  /// GraphQL type the fragment [name] is on.
+  String fragmentType(String name) =>
+      _ctx.fragment(name).typeCondition.on.name.value;
+
   /// Interface declarations of fragment [name] (the interface, its nested
   /// interfaces and its type-specific interfaces).
   String fragmentInterfaces(String name) {
