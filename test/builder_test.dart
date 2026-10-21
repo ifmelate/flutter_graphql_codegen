@@ -372,5 +372,46 @@ type Query { b: Thing c: User version: String }
             contains('fragments.dart'),
           )));
     });
+
+    test('of Flutter widgets are reported', () async {
+      CodegenConfigContext.flutterWidgets = true;
+      // Both get the widget GetVersionQuery.
+      await run({
+        'a|lib/graphql/a.graphql': 'query GetVersion { version }',
+        'a|lib/graphql/b.graphql': 'query GetVersionQuery { version }',
+      });
+      expect(logs,
+          contains(allOf(contains('BLD108'), contains('"GetVersionQuery"'))));
+    });
+  });
+
+  group('flutter_widgets and flutter_hooks', () {
+    test('add widgets and hooks to the operation files', () async {
+      CodegenConfigContext.flutterWidgets = true;
+      CodegenConfigContext.flutterHooks = true;
+      await run({
+        'a|lib/graphql/a.graphql': r'''
+query GetUser($id: ID!) { user(id: $id) { id } }
+mutation Rename($id: ID!, $name: String!) { rename(id: $id, name: $name) { id } }
+''',
+      });
+      expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+      final getUser = output('get_user_graphql.g.dart')!;
+      expect(getUser,
+          contains("import 'package:flutter/widgets.dart' as widgets;"));
+      expect(getUser,
+          contains('class GetUserQuery extends widgets.StatelessWidget {'));
+      expect(getUser, contains('useGetUserQuery('));
+      final rename = output('rename_graphql.g.dart')!;
+      expect(rename,
+          contains('class RenameMutation extends widgets.StatelessWidget {'));
+      expect(rename, contains('useRenameMutation('));
+    });
+
+    test('are off by default', () async {
+      await run({'a|lib/graphql/a.graphql': 'query GetVersion { version }'});
+      expect(output('get_version_graphql.g.dart'),
+          isNot(contains('graphql_flutter')));
+    });
   });
 }

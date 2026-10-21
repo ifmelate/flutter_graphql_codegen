@@ -1,3 +1,6 @@
 tags:
   compile:
     timeout: 5m
+  # Needs the Flutter SDK on PATH; tagged `compile` as well.
+  flutter:
+    timeout: 10m

@@ -9,6 +9,7 @@ import 'declarations.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
 import 'document_validator.dart';
+import 'flutter_generator.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
 import 'operation_groups.dart';
@@ -54,7 +55,7 @@ class ClientExtensionGenerator {
 // Operation: $operationName (${operation.type.name})
 ${sourcePath == null ? '' : '// Source: $sourcePath\n'}${group == null ? '' : '${group.operationHeader}\n'}${CodeGenerationConstants.ignoreForFile}, $ignores
 
-import 'package:graphql/client.dart' as graphql;
+${FlutterGenerator.imports()}import 'package:graphql/client.dart' as graphql;
 import 'package:normalize/utils.dart' as normalize;
 ${usesFragments ? "import 'fragments.dart';\n" : ''}${group == null ? '' : "import '${group.fileName}';\n"}import 'types.dart';
 $scalarImports
@@ -296,6 +297,12 @@ ${request(writeIdFields)},
     buffer.writeln(_generateOptions(context));
     buffer.write(_generateExtension(context));
     if (group != null) buffer.write(_generateGroupExtension(context, group));
+    final flutter = _generateFlutter(context, definedTypes);
+    if (flutter.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..write(flutter);
+    }
     return (buffer.toString(), classes?.usesFragments ?? false);
   }
 
@@ -636,62 +643,95 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
   /// `parserFn` is the generated parser, so `QueryResult.parsedData` (and
   /// `ObservableQuery` results) are typed.
   static String _generateOptions(_OperationContext ctx) {
-    final common = [
-      ('graphql.FetchPolicy? fetchPolicy', 'fetchPolicy: fetchPolicy'),
-      ('graphql.ErrorPolicy? errorPolicy', 'errorPolicy: errorPolicy'),
-      (
-        'graphql.CacheRereadPolicy? cacheRereadPolicy',
-        'cacheRereadPolicy: cacheRereadPolicy'
-      ),
-      ('graphql.Context? context', 'context: context'),
-      ('Object? optimisticResult', 'optimisticResult: optimisticResult'),
-    ];
-    const poll = ('Duration? pollInterval', 'pollInterval: pollInterval');
-    final t = ctx.returnType;
+    final params = _optionsParams(ctx);
     final buffer = StringBuffer();
     switch (ctx.operation.type) {
       case OperationType.query:
         buffer
           ..writeln(_optionsFunction(ctx, 'QueryOptions', 'Query',
-              'GraphQLClient.query', [...common, poll]))
+              'GraphQLClient.query', params['Query']!))
           ..write(_optionsFunction(ctx, 'WatchQueryOptions', 'WatchQuery',
-              'GraphQLClient.watchQuery', [
-            ...common,
-            poll,
-            ('bool fetchResults = false', 'fetchResults: fetchResults'),
-            (
-              'bool carryForwardDataOnException = true',
-              'carryForwardDataOnException: carryForwardDataOnException'
-            ),
-            (
-              'bool? eagerlyFetchResults',
-              'eagerlyFetchResults: eagerlyFetchResults'
-            ),
-          ]));
+              'GraphQLClient.watchQuery', params['WatchQuery']!));
       case OperationType.mutation:
-        buffer.write(_optionsFunction(
-            ctx, 'MutationOptions', 'Mutation', 'GraphQLClient.mutate', [
-          ...common,
-          ('graphql.OnMutationUpdate<$t>? update', 'update: update'),
-          (
-            'graphql.OnMutationCompleted? onCompleted',
-            'onCompleted: onCompleted'
-          ),
-          ('graphql.OnError? onError', 'onError: onError'),
-        ]));
+        buffer.write(_optionsFunction(ctx, 'MutationOptions', 'Mutation',
+            'GraphQLClient.mutate', params['Mutation']!));
       case OperationType.subscription:
-        buffer.write(_optionsFunction(ctx, 'SubscriptionOptions',
-            'Subscription', 'GraphQLClient.subscribe', common));
+        buffer.write(_optionsFunction(
+            ctx,
+            'SubscriptionOptions',
+            'Subscription',
+            'GraphQLClient.subscribe',
+            params['Subscription']!));
     }
     return buffer.toString();
   }
+
+  /// Named parameters of the options functions of the operation, by suffix
+  /// (`Query`, `WatchQuery`, `Mutation`, `Subscription`).
+  static Map<String, List<OptionsParam>> _optionsParams(_OperationContext ctx) {
+    const common = [
+      OptionsParam('graphql.FetchPolicy?', 'fetchPolicy'),
+      OptionsParam('graphql.ErrorPolicy?', 'errorPolicy'),
+      OptionsParam('graphql.CacheRereadPolicy?', 'cacheRereadPolicy'),
+      OptionsParam('graphql.Context?', 'context'),
+      OptionsParam('Object?', 'optimisticResult'),
+    ];
+    const poll = OptionsParam('Duration?', 'pollInterval');
+    return switch (ctx.operation.type) {
+      OperationType.query => {
+          'Query': const [
+            ...common,
+            poll,
+            // Called by graphql_flutter's Query widget and useQuery hook.
+            OptionsParam('graphql.OnQueryComplete?', 'onComplete'),
+            OptionsParam('graphql.OnQueryError?', 'onError'),
+          ],
+          'WatchQuery': const [
+            ...common,
+            poll,
+            OptionsParam('bool', 'fetchResults', 'false'),
+            OptionsParam('bool', 'carryForwardDataOnException', 'true'),
+            OptionsParam('bool?', 'eagerlyFetchResults'),
+          ],
+        },
+      OperationType.mutation => {
+          'Mutation': [
+            ...common,
+            OptionsParam(
+                'graphql.OnMutationUpdate<${ctx.returnType}>?', 'update'),
+            const OptionsParam('graphql.OnMutationCompleted?', 'onCompleted'),
+            const OptionsParam('graphql.OnError?', 'onError'),
+          ],
+        },
+      OperationType.subscription => {'Subscription': common},
+    };
+  }
+
+  /// The widgets and hooks of the operation (`flutter_widgets`,
+  /// `flutter_hooks`).
+  static String _generateFlutter(
+          _OperationContext ctx, Set<String> definedTypes) =>
+      FlutterGenerator.generate(FlutterOperation(
+        name: ctx.name,
+        type: ctx.operation.type,
+        pascal: ctx.pascal,
+        camel: ctx.camel,
+        resultType: ctx.returnType,
+        variables: switch (ctx.variablesKind) {
+          _VariablesKind.none => OperationVariables.none,
+          _VariablesKind.required => OperationVariables.required,
+          _VariablesKind.optional => OperationVariables.optional,
+        },
+        optionsParams: _optionsParams(ctx),
+        definedTypes: definedTypes,
+      ));
 
   static String _optionsFunction(
     _OperationContext ctx,
     String optionsClass,
     String suffix,
     String clientMethod,
-    List<(String, String)> params,
+    List<OptionsParam> params,
   ) {
     final t = ctx.returnType;
     final vars = '${ctx.pascal}Variables';
@@ -707,8 +747,8 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
       case _VariablesKind.none:
         buffer.write('{\n');
     }
-    for (final (param, _) in params) {
-      buffer.writeln('  $param,');
+    for (final param in params) {
+      buffer.writeln('  ${param.declaration},');
     }
     buffer
       ..writeln('}) =>')
@@ -716,8 +756,8 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
       ..writeln('    document: ${ctx.camel}Document,')
       ..writeln('    operationName: ${ctx.camel}OperationName,')
       ..writeln('    variables: ${ctx.variablesJson},');
-    for (final (_, arg) in params) {
-      buffer.writeln('    $arg,');
+    for (final param in params) {
+      buffer.writeln('    ${param.name}: ${param.name},');
     }
     buffer
       ..writeln('    parserFn: parse${ctx.pascal}Data,')
@@ -864,6 +904,22 @@ $write
 }
 
 enum _VariablesKind { none, required, optional }
+
+/// A named parameter of a generated options function (`<op>QueryOptions`),
+/// passed on unchanged as the argument of the same name.
+class OptionsParam {
+  final String type;
+  final String name;
+
+  /// Default value, for a non-nullable parameter.
+  final String? defaultValue;
+
+  const OptionsParam(this.type, this.name, [this.defaultValue]);
+
+  /// `Type name` or `Type name = default`.
+  String get declaration =>
+      defaultValue == null ? '$type $name' : '$type $name = $defaultValue';
+}
 
 /// A root field selected by an operation.
 class _RootField {
