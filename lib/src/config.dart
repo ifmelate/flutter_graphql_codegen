@@ -38,6 +38,37 @@ class FragmentImport {
   const FragmentImport({required this.dart, required this.documents});
 }
 
+final _packageUri = RegExp(r'^package:([a-z_][a-z0-9_]*)/(.+)$');
+
+/// Splits `package:name/path` into the package name and the path inside its
+/// `lib/` folder; null for any other form (also for paths with empty or `.`
+/// / `..` segments, or a backslash).
+(String package, String path)? splitPackageUri(String uri) {
+  final match = _packageUri.firstMatch(uri);
+  if (match == null) return null;
+  final path = match.group(2)!;
+  if (path.contains(r'\') ||
+      path.split('/').any((s) => s.isEmpty || s == '.' || s == '..')) {
+    return null;
+  }
+  return (match.group(1)!, path);
+}
+
+/// Whether [path] contains glob syntax.
+bool _isGlob(String path) => path.contains(RegExp(r'[*?\[\]{}]'));
+
+/// Checks that [value] of option [option] is `package:name/path.dart`.
+void _checkDartUri(String option, String value) {
+  final parts = splitPackageUri(value);
+  if (parts == null || !parts.$2.endsWith('.dart') || _isGlob(parts.$2)) {
+    throw CodegenException(
+      CodegenErrorCodes.cfgInvalid,
+      '$option must be a package: URI of a Dart file '
+      '(package:name/path/file.dart), got "$value"',
+    );
+  }
+}
+
 class GraphQLCodegenConfig {
   final String schemaUrl;
 
@@ -275,12 +306,7 @@ class GraphQLCodegenConfig {
         );
       }
       final typesImport = (yamlMap['types_import'] as String?)?.trim();
-      if (typesImport != null && !typesImport.startsWith('package:')) {
-        throw CodegenException(
-          CodegenErrorCodes.cfgInvalid,
-          'types_import must be a package: URI, got "$typesImport"',
-        );
-      }
+      if (typesImport != null) _checkDartUri('types_import', typesImport);
 
       // Enums: `Enum: {type, import, from_json, to_json, fallback}`.
       const enumKeys = {'type', 'import', 'from_json', 'to_json', 'fallback'};
@@ -333,6 +359,14 @@ class GraphQLCodegenConfig {
               CodegenErrorCodes.cfgInvalid,
               'fragment_imports entries need "dart" and "documents", both '
               'package: URIs',
+            );
+          }
+          _checkDartUri('fragment_imports "dart"', dart);
+          if (splitPackageUri(documents) == null) {
+            throw CodegenException(
+              CodegenErrorCodes.cfgInvalid,
+              'fragment_imports "documents" must be a package: URI or glob '
+              '(package:name/path/**.graphql), got "$documents"',
             );
           }
           fragmentImports.add(FragmentImport(dart: dart, documents: documents));
