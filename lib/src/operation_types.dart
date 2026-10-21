@@ -17,6 +17,9 @@ import 'json_exprs.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
 
+/// The library of this package's fragments, as imported by operation files.
+const localFragmentsLibrary = 'fragments.dart';
+
 /// Classes generated for one operation.
 class OperationClasses {
   OperationClasses._({
@@ -25,7 +28,7 @@ class OperationClasses {
     required this.writeType,
     required String Function(String data) parse,
     required String Function(String data) write,
-    required this.usesFragments,
+    required this.libraries,
   })  : _parse = parse,
         _write = write;
 
@@ -39,7 +42,12 @@ class OperationClasses {
   final String writeType;
 
   /// Whether [code] refers to declarations of `fragments.dart`.
-  final bool usesFragments;
+  bool get usesFragments => libraries.contains(localFragmentsLibrary);
+
+  /// Libraries with fragment interfaces [code] implements:
+  /// [localFragmentsLibrary] and the URIs of imported fragments
+  /// (`fragment_imports`), sorted.
+  final List<String> libraries;
 
   final String Function(String data) _parse;
   final String Function(String data) _write;
@@ -57,15 +65,27 @@ class OperationClasses {
 /// [schema] must already be merged with its extensions, and
 /// `SchemaAnalyzer.extractCustomTypesAndEnums` must have run for it.
 class OperationTypes {
+  /// [fragmentLibraries] maps the fragments of [fragments] declared by
+  /// another package (`fragment_imports`) to the URI of their library: their
+  /// interfaces are implemented but not declared again.
   OperationTypes(
-      DocumentNode schema, Map<String, FragmentDefinitionNode> fragments)
+      DocumentNode schema, Map<String, FragmentDefinitionNode> fragments,
+      {Map<String, String> fragmentLibraries = const {}})
       : _ctx = _Context(
           _SchemaInfo(schema),
           fragments,
           legacy: !CodegenConfigContext.strictNullability,
+          libraries: fragmentLibraries,
         );
 
   final _Context _ctx;
+
+  final Set<String> _fragmentFileLibraries = {};
+
+  /// Libraries of imported fragments that the code returned so far by
+  /// [fragmentInterfaces] and [fragmentData] refers to, sorted.
+  List<String> get fragmentFileLibraries =>
+      _fragmentFileLibraries.toList()..sort();
 
   /// Generates the classes for [operation] named [name] whose root type is
   /// [rootType].
@@ -128,15 +148,19 @@ class OperationTypes {
       writeType: writeType,
       parse: parse,
       write: write,
-      usesFragments: emitter.usesFragments,
+      libraries: emitter.libraries.toList()..sort(),
     );
   }
 
-  /// Names of the fragments with generated declarations, sorted.
+  /// Names of the fragments with generated declarations, sorted; imported
+  /// fragments are left out (their package declares them).
   ///
   /// Fragments on introspection types (`__Type`, ...) have none: the
   /// fields selecting them (`__schema`, `__type`) are raw JSON maps.
-  List<String> get fragmentNames => _ctx.declaredFragments;
+  List<String> get fragmentNames => [
+        for (final name in _ctx.declaredFragments)
+          if (!_ctx.libraries.containsKey(name)) name,
+      ];
 
   /// GraphQL type the fragment [name] is on.
   String fragmentType(String name) =>
@@ -146,6 +170,7 @@ class OperationTypes {
   /// interfaces and its type-specific interfaces).
   String fragmentInterfaces(String name) {
     final emitter = _Emitter(_ctx)..tree(_ctx.fragmentInterface(name));
+    _fragmentFileLibraries.addAll(emitter.libraries);
     return emitter.code;
   }
 
@@ -153,6 +178,7 @@ class OperationTypes {
   /// `<Fragment>Data`).
   String fragmentData(String name) {
     final emitter = _Emitter(_ctx)..tree(_ctx.fragmentFile.data[name]!);
+    _fragmentFileLibraries.addAll(emitter.libraries);
     return emitter.code;
   }
 
@@ -307,6 +333,10 @@ class _Shape {
   /// Declared in `fragments.dart`.
   final bool fragment;
 
+  /// URI of the library declaring this shape when it belongs to a fragment
+  /// of another package (`fragment_imports`).
+  String? library;
+
   /// Prefix of the names of nested classes.
   final String path;
 
@@ -421,12 +451,16 @@ Set<String> _withConditions(Set<String> base, List<DirectiveNode> directives) {
 
 /// State shared by the builders of one generation run.
 class _Context {
-  _Context(this.schema, this.fragments, {required this.legacy})
+  _Context(this.schema, this.fragments,
+      {required this.legacy, this.libraries = const {}})
       : reserved = _reservedNames();
 
   final _SchemaInfo schema;
   final Map<String, FragmentDefinitionNode> fragments;
   final bool legacy;
+
+  /// Imported fragment name -> URI of the library declaring it.
+  final Map<String, String> libraries;
 
   /// Type names generated code must not declare: built-in names and the
   /// declarations of types.dart (enums, inputs, scalars).
@@ -501,7 +535,18 @@ class _Context {
       doc: 'Fields of the `$name` fragment on `$type`.',
     );
     _building.remove(name);
+    final library = libraries[name];
+    if (library != null) _markLibrary(shape, library);
     return _interfaces[name] = shape;
+  }
+
+  /// Marks [shape] and the shapes declared under it as declared by
+  /// [library].
+  static void _markLibrary(_Shape shape, String library) {
+    shape.library = library;
+    for (final child in shape.children) {
+      _markLibrary(child, library);
+    }
   }
 
   _FragmentFile get fragmentFile => _fragmentFile ??= _FragmentFile(this);
@@ -960,7 +1005,11 @@ class _Emitter {
   final _Context ctx;
   final StringBuffer _out = StringBuffer();
   bool _usesUndefined = false;
-  bool usesFragments = false;
+
+  /// Libraries declaring the fragment interfaces the code written so far
+  /// implements, other than the file it is in: [localFragmentsLibrary]
+  /// (from operation files) and those of imported fragments.
+  final Set<String> libraries = {};
 
   /// Marker for copyWith parameters that were not passed.
   static const undefined =
@@ -1059,7 +1108,14 @@ class _Emitter {
 
   String _implements(_Shape s) {
     if (s.supers.isEmpty) return '';
-    if (!s.fragment && s.supers.any((x) => x.fragment)) usesFragments = true;
+    for (final x in s.supers) {
+      final library = x.library;
+      if (library != null) {
+        if (library != s.library) libraries.add(library);
+      } else if (x.fragment && !s.fragment) {
+        libraries.add(localFragmentsLibrary);
+      }
+    }
     return ' implements ${s.supers.map((x) => x.name).join(', ')}';
   }
 

@@ -21,7 +21,9 @@ class GraphQLCodeGenerator {
   /// Generates an operation file.
   ///
   /// [fragments] supplies fragment definitions that live outside
-  /// [documentContent] (e.g. in other `.graphql` files).
+  /// [documentContent] (e.g. in other `.graphql` files). [fragmentLibraries]
+  /// maps those declared by another package (`fragment_imports`) to the URI
+  /// of their `fragments.dart`.
   static String generateOperationFile(
     String schema,
     String documentContent,
@@ -29,6 +31,7 @@ class GraphQLCodeGenerator {
     String operationType,
     String typesContent, {
     Map<String, FragmentDefinitionNode> fragments = const {},
+    Map<String, String> fragmentLibraries = const {},
   }) {
     return ClientExtensionGenerator.generateOperationFile(
       operationName,
@@ -37,17 +40,22 @@ class GraphQLCodeGenerator {
       gql_lang.parseString(schema),
       OperationAnalyzer.extractDefinedTypes(typesContent),
       fragments: fragments,
+      fragmentLibraries: fragmentLibraries,
     );
   }
 
   /// Generates `fragments.dart` (`result_types: operation`): per fragment its
   /// document, an interface with its fields and a `<Fragment>Data` class.
+  /// Fragments in [fragmentLibraries] (declared by another package, name ->
+  /// library URI) are only used, not declared.
   ///
-  /// Returns null when [fragments] is empty.
+  /// Returns null when [fragments] has no fragment to declare.
   static String? generateFragmentsFile(
-      String schema, Map<String, FragmentDefinitionNode> fragments) {
+      String schema, Map<String, FragmentDefinitionNode> fragments,
+      {Map<String, String> fragmentLibraries = const {}}) {
     return ClientExtensionGenerator.generateFragmentsFile(
-        gql_lang.parseString(schema), fragments);
+        gql_lang.parseString(schema), fragments,
+        fragmentLibraries: fragmentLibraries);
   }
 
   /// Extracts defined types from types content

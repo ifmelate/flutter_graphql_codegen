@@ -22,6 +22,9 @@ class ClientExtensionGenerator {
   ///
   /// [sourcePath] is recorded in the header so the builder can tell which
   /// document a file was generated from.
+  ///
+  /// [fragmentLibraries] maps fragments of [fragments] declared by another
+  /// package (`fragment_imports`) to the URI of their library.
   static String generateOperationFile(
     String operationName,
     String operationType,
@@ -29,17 +32,19 @@ class ClientExtensionGenerator {
     DocumentNode schemaDoc,
     Set<String> definedTypes, {
     Map<String, FragmentDefinitionNode> fragments = const {},
+    Map<String, String> fragmentLibraries = const {},
     String? sourcePath,
   }) {
     final operation = _findOperation(
         gql_lang.parseString(operationDocumentContent), operationName);
     final scalarImports = TypeGenerator.scalarImportDirectives();
-    final (body, usesFragments) = _generate(
+    final (body, libraries) = _generate(
       operationName,
       operationDocumentContent,
       schemaDoc,
       definedTypes,
       fragments: fragments,
+      fragmentLibraries: fragmentLibraries,
     );
     final ignores = CodegenConfigContext.operationResultTypes
         ? 'unused_import, deprecated_member_use_from_same_package'
@@ -50,37 +55,44 @@ ${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants
 
 import 'package:graphql/client.dart' as graphql;
 import 'package:normalize/utils.dart' as normalize;
-${usesFragments ? "import 'fragments.dart';\n" : ''}import 'types.dart';
-$scalarImports
+${_libraryImports(libraries)}$scalarImports
 $body''';
   }
+
+  /// Import directives of generated files for [libraries] (fragment
+  /// libraries, see [OperationClasses.libraries]) and types.dart, which is
+  /// that of another package with `types_import`.
+  static String _libraryImports(Iterable<String> libraries) => [
+        for (final library in {
+          ...libraries,
+          CodegenConfigContext.typesImport ?? 'types.dart',
+        })
+          "import '$library';\n",
+      ].join();
 
   /// Generates `fragments.dart`: for every fragment its document, an
   /// interface with its fields (implemented by the operation classes that
   /// spread it), a data class and `read<Fragment>Fragment` /
   /// `write<Fragment>Fragment` cache methods. Fragments on introspection
   /// types are left out. Returns null when no fragment is left.
+  ///
+  /// Fragments listed in [fragmentLibraries] are declared by another package
+  /// (`fragment_imports`, name -> library URI): they are not declared again,
+  /// but local fragments may spread them.
   static String? generateFragmentsFile(
     DocumentNode schemaDoc,
-    Map<String, FragmentDefinitionNode> fragments,
-  ) {
+    Map<String, FragmentDefinitionNode> fragments, {
+    Map<String, String> fragmentLibraries = const {},
+  }) {
     if (fragments.isEmpty) return null;
     final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
-    final types = OperationTypes(schema, fragments);
+    final types =
+        OperationTypes(schema, fragments, fragmentLibraries: fragmentLibraries);
     if (types.fragmentNames.isEmpty) return null;
     types.checkFragments();
 
-    final buffer = StringBuffer()
-      ..writeln(CodeGenerationConstants.generatedFileWarning)
-      ..writeln('// Fragments of all documents')
-      ..writeln('${CodeGenerationConstants.ignoreForFile}, unused_import, '
-          'deprecated_member_use_from_same_package')
-      ..writeln()
-      ..writeln("import 'package:graphql/client.dart' as graphql;")
-      ..writeln("import 'types.dart';")
-      ..write(TypeGenerator.scalarImportDirectives())
-      ..writeln();
+    final buffer = StringBuffer();
     for (final name in types.fragmentNames) {
       final camel = name.toCamelCase();
       final document = gql_lang
@@ -98,7 +110,13 @@ $body''';
         ..write(_fragmentCacheExtension(types, name));
     }
     buffer.write(types.support);
-    final code = buffer.toString();
+    final code = '''${CodeGenerationConstants.generatedFileWarning}
+// Fragments of all documents
+${CodeGenerationConstants.ignoreForFile}, unused_import, deprecated_member_use_from_same_package
+
+import 'package:graphql/client.dart' as graphql;
+${_libraryImports(types.fragmentFileLibraries)}${TypeGenerator.scalarImportDirectives()}
+$buffer''';
 
     // Classes are checked by checkFragments; this catches constants and
     // extensions, e.g. of names differing only in the case of the first
@@ -236,13 +254,15 @@ ${request(writeIdFields)},
         fragments: fragments,
       ).$1;
 
-  /// [generateClientExtension] plus whether the code uses `fragments.dart`.
-  static (String, bool) _generate(
+  /// [generateClientExtension] plus the fragment libraries the code uses
+  /// (see [OperationClasses.libraries]).
+  static (String, List<String>) _generate(
     String operationName,
     String operationDocumentContent,
     DocumentNode schemaDoc,
     Set<String> definedTypes, {
     Map<String, FragmentDefinitionNode> fragments = const {},
+    Map<String, String> fragmentLibraries = const {},
   }) {
     final operationDoc = gql_lang.parseString(operationDocumentContent);
     final operation = _findOperation(operationDoc, operationName);
@@ -264,6 +284,7 @@ ${request(writeIdFields)},
       definedTypes: definedTypes,
       strict: CodegenConfigContext.strictNullability,
       fragments: allFragments,
+      fragmentLibraries: fragmentLibraries,
     );
 
     final document = gql_lang.printNode(
@@ -288,7 +309,7 @@ ${request(writeIdFields)},
         : _generateTypedParser(context, classes));
     buffer.writeln(_generateOptions(context));
     buffer.write(_generateExtension(context));
-    return (buffer.toString(), classes?.usesFragments ?? false);
+    return (buffer.toString(), classes?.libraries ?? const <String>[]);
   }
 
   static OperationDefinitionNode _findOperation(
@@ -790,12 +811,14 @@ class _OperationContext {
     required Set<String> definedTypes,
     required this.strict,
     required Map<String, FragmentDefinitionNode> fragments,
+    Map<String, String> fragmentLibraries = const {},
   })  : camel = name.toCamelCase(),
         pascal = name.capitalize() {
     final rootType = _rootType(schema);
     if (CodegenConfigContext.operationResultTypes) {
       rootFields = const [];
-      classes = OperationTypes(schema, fragments)
+      classes = OperationTypes(schema, fragments,
+              fragmentLibraries: fragmentLibraries)
           .operation(operation, name, rootType.name.value);
       return;
     }
