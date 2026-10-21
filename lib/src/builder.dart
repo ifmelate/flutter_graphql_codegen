@@ -15,10 +15,22 @@ import 'package:pub_semver/pub_semver.dart';
 
 import 'config.dart';
 import 'config_context.dart';
+import 'declarations.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
 import 'formatting.dart';
 import 'naming.dart';
+
+/// An operation file and the public top-level names it declares.
+class _Declarations {
+  final String operation;
+
+  /// Package-relative path of the document defining [operation].
+  final String source;
+  final Set<String> names;
+
+  _Declarations(this.operation, this.source, this.names);
+}
 
 /// Schema-derived data shared by all operations of a build.
 class _SchemaArtifacts {
@@ -109,6 +121,10 @@ class GraphQLCodegenBuilder implements Builder {
       fragments = await _externalFragments(buildStep, document);
     }
 
+    // This document's operation files are declared anew below.
+    await (_declarationsLoaded ??= _loadDeclarations());
+    _declarations.removeWhere((_, d) => d.source == inputId.path);
+
     // Output file name -> operation that generates it, for this document.
     final outputs = <String, String>{};
     for (final operation in operations) {
@@ -148,6 +164,7 @@ class GraphQLCodegenBuilder implements Builder {
       } on CodegenException catch (e) {
         throw _report(e);
       }
+      await _checkDeclarations(buildStep, fileName, operationName, code);
 
       await _writeToOutputDirectory(operationName, code);
       log.fine('Generated ${config.outputDir}/$fileName');
@@ -195,6 +212,109 @@ class GraphQLCodegenBuilder implements Builder {
           : 'Operation "$clash" in $source and operation "$operationName" in '
               '${buildStep.inputId.path} both generate $fileName',
     ));
+  }
+
+  /// Operation files by output file name, with the names they declare.
+  ///
+  /// All files are written into one directory and exported together by
+  /// index.dart, so a name two of them declare breaks the build (e.g. `A_B_C`
+  /// from operation `A_B` field `c` and from operation `A` path `b.c`).
+  /// build_runner builds each document in its own step and only tracks the
+  /// documents a step reads, so this registry is how one step knows what the
+  /// others declared: it is filled from the operation files already on disk
+  /// (from earlier builds, once per builder instance) and updated as files
+  /// are generated.
+  ///
+  /// Limits: an entry from disk can be outdated while its document has
+  /// changed but not been rebuilt yet in this build. Entries whose
+  /// operation is no longer defined in its document are ignored, but one
+  /// whose selection changed is compared as it was last generated.
+  final Map<String, _Declarations> _declarations = {};
+  Future<void>? _declarationsLoaded;
+
+  /// Names declared by the last generated fragments.dart.
+  Set<String> _fragmentDeclarations = const {};
+
+  static final _operationHeader =
+      RegExp(r'^// Operation: (\w+) ', multiLine: true);
+  static final _sourceHeader = RegExp(r'^// Source: (.+)$', multiLine: true);
+
+  Future<void> _loadDeclarations() async {
+    final dir = Directory(config.outputDir);
+    if (!await dir.exists()) return;
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is! File || !entity.path.endsWith('.g.dart')) continue;
+      final text = await entity.readAsString();
+      final operation = _operationHeader.firstMatch(text)?.group(1);
+      final source = _sourceHeader.firstMatch(text)?.group(1);
+      if (operation == null || source == null) continue;
+      _declarations.putIfAbsent(
+          p.basename(entity.path),
+          () => _Declarations(
+              operation, source, topLevelDeclarations(text).toSet()));
+    }
+  }
+
+  /// Registers the names [code] (the file [fileName] of [operationName])
+  /// declares and throws when another operation file or fragments.dart
+  /// declares one of them too.
+  Future<void> _checkDeclarations(BuildStep buildStep, String fileName,
+      String operationName, String code) async {
+    final source = buildStep.inputId.path;
+    final names = topLevelDeclarations(code).toSet();
+
+    // Compared and registered without an await in between, so steps
+    // running concurrently see each other.
+    final clashes = [
+      for (final MapEntry(key: file, value: other) in _declarations.entries)
+        if (file != fileName && other.names.intersection(names).isNotEmpty)
+          other,
+    ];
+    _declarations[fileName] = _Declarations(operationName, source, names);
+
+    String list(Set<String> common) {
+      final sorted = common.toList()..sort();
+      final shown = sorted.take(3).map((n) => '"$n"').join(', ');
+      return sorted.length > 3 ? '$shown and ${sorted.length - 3} more' : shown;
+    }
+
+    final withFragments = names.intersection(_fragmentDeclarations);
+    if (withFragments.isNotEmpty) {
+      throw _report(CodegenException(
+        CodegenErrorCodes.buildDuplicateDeclaration,
+        'Operation "$operationName" in $source declares '
+        '${list(withFragments)}, which fragments.dart declares as well; '
+        'rename the operation or the fragment',
+      ));
+    }
+    for (final other in clashes) {
+      if (!await _stillDefined(buildStep, other)) continue;
+      final common = names.intersection(other.names);
+      final where = other.source == source
+          ? 'in $source'
+          : 'in ${other.source} and $source';
+      throw _report(CodegenException(
+        CodegenErrorCodes.buildDuplicateDeclaration,
+        'Operations "${other.operation}" and "$operationName" ($where) both '
+        'generate ${list(common)}, so index.dart cannot export both; rename '
+        'one of the operations (or alias a field so the class names differ)',
+      ));
+    }
+  }
+
+  /// Whether the document of [d] still defines its operation.
+  Future<bool> _stillDefined(BuildStep buildStep, _Declarations d) async {
+    final id = AssetId(buildStep.inputId.package, d.source);
+    if (!await buildStep.canRead(id)) return false;
+    try {
+      final doc = gql_lang.parseString(await buildStep.readAsString(id));
+      return doc.definitions
+          .whereType<OperationDefinitionNode>()
+          .any((op) => op.name?.value == d.operation);
+    } catch (_) {
+      // Parse errors are reported when that document itself is built.
+      return false;
+    }
   }
 
   CodegenException _report(CodegenException e) {
@@ -392,6 +512,8 @@ class GraphQLCodegenBuilder implements Builder {
     } on CodegenException catch (e) {
       throw _report(e);
     }
+    _fragmentDeclarations =
+        code == null ? const {} : topLevelDeclarations(code).toSet();
     if (code == null) {
       if (await file.exists() &&
           (await file.readAsString())
