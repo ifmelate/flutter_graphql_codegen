@@ -409,7 +409,7 @@ your query selects. If `User.name` is `String!` in the schema and a query asks
 for `user { id }` only, parsing that `User` throws because `name` is missing.
 For now, select every non-nullable field of the object types you fetch.
 Per-query result types would fix this properly, but they'd change the generated
-API, so they're planned for a major release.
+API, so they're planned for 3.0 (see [ROADMAP.md](ROADMAP.md)).
 
 Other limitations:
 
