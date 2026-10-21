@@ -772,6 +772,12 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   CodegenConfigContext.includeNullInputs = cfg.includeNullInputs;
   CodegenConfigContext.validateDocuments = cfg.validateDocuments;
   CodegenConfigContext.resultTypes = cfg.resultTypes;
+  CodegenConfigContext.flutterWidgets = cfg.flutterWidgets;
+  CodegenConfigContext.flutterHooks = cfg.flutterHooks;
+  CodegenConfigContext.enumConfigs = Map.of(cfg.enums);
+  CodegenConfigContext.groupOperations = cfg.groupOperations;
+  CodegenConfigContext.typesImport = cfg.typesImport;
+  CodegenConfigContext.fragmentImports = List.of(cfg.fragmentImports);
   CodegenConfigContext.scalarImports = Map.of(cfg.scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(cfg.scalarConverters);
   CodegenConfigContext.strictScalars = cfg.strictScalars;
