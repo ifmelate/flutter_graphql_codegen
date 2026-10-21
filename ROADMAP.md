@@ -2,20 +2,6 @@
 
 Plans, not promises. Order may change; each item ships with tests.
 
-## 2.5 — fixes without API changes
-
-- An operation named like a `GraphQLClient` method (`Query`, `Mutate`,
-  `Subscribe`, ...) generates extension methods that shadow the client's own
-- A schema without object types leaves a `part 'types.g.dart'` that is never
-  generated
-- An enum named `Enum` clashes with the built-in `EnumConverter`
-- Empty types (`type Mutation {}`) and repeated interfaces produce broken code
-  instead of a clear error
-- Document validation doesn't know the `__schema` and `__type` meta fields
-- Inputs: tell an explicit `null` from a missing field
-- Enums: keep the raw string next to `$unknown`
-- Cache: evict a cached query
-
 ## 3.0 — result types per operation
 
 - Result classes follow the selection, not the schema type: only the selected
