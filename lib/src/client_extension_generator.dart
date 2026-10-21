@@ -9,6 +9,7 @@ import 'declarations.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
 import 'document_validator.dart';
+import 'enum_settings.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
 import 'operation_types.dart';
@@ -67,6 +68,7 @@ $body''';
     if (fragments.isEmpty) return null;
     final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
+    EnumSettings.validate(schema);
     final types = OperationTypes(schema, fragments);
     if (types.fragmentNames.isEmpty) return null;
     types.checkFragments();
@@ -253,6 +255,7 @@ ${request(writeIdFields)},
 
     final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
+    EnumSettings.validate(schema);
     if (CodegenConfigContext.validateDocuments) {
       DocumentValidator(schema).check(operation, allFragments);
     }

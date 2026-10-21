@@ -7,6 +7,7 @@ import 'code_utils.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
+import 'enum_settings.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
@@ -41,6 +42,7 @@ class TypeGenerator {
         DocumentUtils.mergeSchemaExtensions(gql_lang.parseString(schema));
     _checkStructure(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schemaDoc);
+    EnumSettings.validate(schemaDoc);
     _checkStrictScalars();
     _nullableConverters.clear();
     _usesEnumRaw = false;
@@ -338,9 +340,12 @@ ${_generatePossibleTypes()}
 ${_generateNullableConverters()}${_usesEnumRaw ? _enumRawHelper : ''}''';
   }
 
-  /// `import` lines for the libraries of mapped scalar types.
+  /// `import` lines for the libraries of mapped scalar and enum types.
   static String scalarImportDirectives() {
-    final uris = CodegenConfigContext.scalarImports.values.toSet().toList()
+    final uris = {
+      ...CodegenConfigContext.scalarImports.values,
+      ...EnumSettings.imports,
+    }.toList()
       ..sort();
     return uris.map((uri) => "import '$uri';\n").join();
   }
@@ -488,7 +493,8 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
     final buffer = StringBuffer();
 
     for (final definition in _sortedDefinitions(schemaDoc)) {
-      if (definition is EnumTypeDefinitionNode) {
+      if (definition is EnumTypeDefinitionNode &&
+          !EnumSettings.isCustom(definition.name.value)) {
         final enumName = SchemaAnalyzer.dartTypeName(definition.name.value);
         buffer.write(_docComment(definition.description));
         buffer.writeln('enum $enumName {');
@@ -506,7 +512,7 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
           }
           buffer.writeln('  $dartName,');
         }
-        if (CodegenConfigContext.unknownEnumFallback) {
+        if (EnumSettings.hasUnknown(definition.name.value)) {
           buffer.writeln('  /// A value added to the schema after this code '
               'was generated.');
           buffer.writeln('  \$unknown,');
@@ -525,7 +531,25 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
 
     for (final definition in _sortedDefinitions(schemaDoc)) {
       if (definition is EnumTypeDefinitionNode) {
-        final enumName = SchemaAnalyzer.dartTypeName(definition.name.value);
+        final graphqlName = definition.name.value;
+        final enumName = SchemaAnalyzer.dartTypeName(graphqlName);
+        final config = CodegenConfigContext.enumConfigs[graphqlName];
+        if (config?.type case final type?) {
+          buffer.writeln('''
+/// Converts `$graphqlName` values with `${config!.fromJson}` and `${config.toJson}`
+/// (`enums:` in graphql_codegen.yaml).
+class ${enumName}Converter extends JsonConverter<$type, String> {
+  const ${enumName}Converter();
+
+  @override
+  $type fromJson(String json) => ${config.fromJson}(json);
+
+  @override
+  String toJson($type object) => ${config.toJson}(object);
+}
+''');
+          continue;
+        }
         final values = _sortedEnumValues(definition);
         buffer.writeln(
             'class ${enumName}Converter extends JsonConverter<$enumName, String> {');
@@ -538,10 +562,13 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
           buffer.writeln(
               "      case '${value.name.value}': return $enumName.${dartEnumValueName(value.name.value)};");
         }
-        final fallback = CodegenConfigContext.unknownEnumFallback;
-        buffer.writeln(fallback
-            ? '      default: return $enumName.\$unknown;'
-            : "      default: throw ArgumentError.value(json, 'json', 'Unknown $enumName value');");
+        final fallback = EnumSettings.hasUnknown(graphqlName);
+        final valueFallback = EnumSettings.fallbackExpr(graphqlName, enumName);
+        buffer.writeln(valueFallback != null
+            ? '      default: return $valueFallback;'
+            : fallback
+                ? '      default: return $enumName.\$unknown;'
+                : "      default: throw ArgumentError.value(json, 'json', 'Unknown $enumName value');");
         buffer.writeln('    }');
         buffer.writeln('  }');
         buffer.writeln();
@@ -1063,9 +1090,8 @@ class $unknownName implements $name {
   /// field's JSON key and never written back.
   static String _rawEnumField(_Field field, List<_Field> fields,
       {required String className}) {
-    if (!CodegenConfigContext.unknownEnumFallback) return '';
     final graphqlBase = getOriginalGraphQLType(field.type);
-    if (!TypeRegistry.isEnum(graphqlBase)) return '';
+    if (!EnumSettings.hasRaw(graphqlBase)) return '';
     var type = field.type;
     if (type is ListTypeNode) {
       type = type.type;
@@ -1076,8 +1102,12 @@ class $unknownName implements $name {
     if (fields.any((f) => f.name == rawName)) return '';
     _usesEnumRaw = true;
     final dartType = field.type is ListTypeNode ? 'List<String?>?' : 'String?';
+    final fallback = EnumSettings.fallback(graphqlBase);
+    final when = fallback == null
+        ? 'also when it is `\$unknown`'
+        : 'also when it was decoded as the fallback `$fallback`';
     return """
-  /// [${dartFieldName(field.name, className: className)}] as the server sent it, also when it is `\$unknown`.
+  /// [${dartFieldName(field.name, className: className)}] as the server sent it, $when.
   @JsonKey(name: '${field.name}#raw', readValue: _enumRaw, includeToJson: false)
   $dartType ${dartFieldName(rawName, className: className)};
 """;
@@ -1181,7 +1211,10 @@ Object? _enumRaw(Map<dynamic, dynamic> json, String key) =>
       // into a value, so nullable elements get a wrapper that keeps null.
       var elementConverter = mappedConverter;
       if (elementConverter == null) {
-        final converter = _scalarConverter(graphqlBase, baseType);
+        // json_serializable can't decode an enum mapped to a user type.
+        final converter = EnumSettings.isCustom(graphqlBase)
+            ? '${SchemaAnalyzer.dartTypeName(graphqlBase)}Converter'
+            : _scalarConverter(graphqlBase, baseType);
         if (converter != null) {
           elementConverter = fieldType.contains('$baseType?')
               ? _nullableConverter(converter, baseType)
@@ -1195,10 +1228,13 @@ Object? _enumRaw(Map<dynamic, dynamic> json, String key) =>
         ];
       }
       // Regular lists (enums, objects, built-in scalars): default value only
-      final unknownArg = CodegenConfigContext.unknownEnumFallback &&
-              TypeRegistry.isEnum(graphqlBase)
-          ? ', unknownEnumValue: $cleanInnerType.\$unknown'
-          : '';
+      final valueFallback =
+          EnumSettings.fallbackExpr(graphqlBase, cleanInnerType);
+      final unknownArg = valueFallback != null
+          ? ', unknownEnumValue: $valueFallback'
+          : EnumSettings.hasUnknown(graphqlBase)
+              ? ', unknownEnumValue: $cleanInnerType.\$unknown'
+              : '';
       return [
         '  @JsonKey(${nameArg}defaultValue: const <$cleanInnerType>[]$unknownArg)'
       ];
@@ -1215,7 +1251,8 @@ Object? _enumRaw(Map<dynamic, dynamic> json, String key) =>
     }
     if (baseType == 'LocalDate') return withName('  @LocalDateConverter()');
     if (TypeRegistry.isEnum(graphqlBase)) {
-      return withName('  @${baseType}Converter()');
+      return withName(
+          '  @${SchemaAnalyzer.dartTypeName(graphqlBase)}Converter()');
     }
     // Safe converters for non-nullable primitives
     if (baseType == 'bool' && !isNullable) {
