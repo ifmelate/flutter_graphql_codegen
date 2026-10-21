@@ -8,6 +8,7 @@ import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
 import 'document_validator.dart';
+import 'json_exprs.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
 import 'type_generator.dart';
@@ -163,7 +164,7 @@ $body''';
       ..writeln();
 
     for (final f in fields) {
-      final type = _inputDartType(f.type, forceNullable: f.optional);
+      final type = JsonExprs.inputDartType(f.type, forceNullable: f.optional);
       buffer.writeln('  final $type ${f.dartName};');
     }
 
@@ -172,7 +173,7 @@ $body''';
       ..writeln('  Map<String, dynamic> toJson() => <String, dynamic>{');
     for (final f in fields) {
       if (f.optional) {
-        var expr = _toJsonExpr(f.type, '${f.dartName}!');
+        var expr = JsonExprs.toJsonExpr(f.type, '${f.dartName}!');
         if (expr == '${f.dartName}!') expr = f.dartName;
         if (CodegenConfigContext.includeNullInputs && !f.hasDefault) {
           final value = expr == f.dartName
@@ -185,68 +186,13 @@ $body''';
         }
       } else {
         buffer.writeln("        '${f.graphqlName}': "
-            "${_toJsonExpr(f.type, f.dartName)},");
+            "${JsonExprs.toJsonExpr(f.type, f.dartName)},");
       }
     }
     buffer
       ..writeln('      };')
       ..writeln('}');
     return buffer.toString();
-  }
-
-  /// Dart type of an input value, respecting the schema's nullability.
-  static String _inputDartType(TypeNode type, {bool forceNullable = false}) {
-    final nullable = forceNullable || !type.isNonNull;
-    final base = type is ListTypeNode
-        ? 'List<${_inputDartType(type.type)}>'
-        : _namedDartType((type as NamedTypeNode).name.value);
-    return _nullable(base, nullable);
-  }
-
-  /// Expression serialising the non-null value [v] of GraphQL [type].
-  static String _toJsonExpr(TypeNode type, String v) {
-    if (type is ListTypeNode) {
-      final inner = type.type;
-      final item = _toJsonExpr(inner, 'e');
-      if (item == 'e') return v;
-      final itemExpr = inner.isNonNull ? item : '(e == null ? null : $item)';
-      return '$v.map((e) => $itemExpr).toList()';
-    }
-
-    final name = (type as NamedTypeNode).name.value;
-    final mapped = CodegenConfigContext.scalarMapping[name];
-    if (mapped != null) {
-      final converter = CodegenConfigContext.scalarConverters[name];
-      if (converter != null) return 'const $converter().toJson($v)';
-      if (mapped == 'DateTime') return 'const DateTimeConverter().toJson($v)';
-      return _isJsonNative(mapped) ? v : '$v.toJson()';
-    }
-    // A schema type named like a built-in scalar (e.g. `type Decimal`) is
-    // handled as the type the generator declares for it.
-    switch (TypeRegistry.declaresType(name) ? '' : name) {
-      case 'Int':
-      case 'Float':
-      case 'String':
-      case 'Boolean':
-      case 'ID':
-      case 'Short':
-        return v;
-      case 'DateTime':
-        return 'const DateTimeConverter().toJson($v)';
-      case 'LocalDate':
-        return 'const LocalDateConverter().toJson($v)';
-      case 'Decimal':
-        return 'const SafeDecimalConverter().toJson($v)';
-      case 'Long':
-        return 'const LongConverter().toJson($v)';
-      case 'Byte':
-        return 'const ByteConverter().toJson($v)';
-    }
-    if (TypeRegistry.isEnum(name) || TypeRegistry.isCustomScalar(name)) {
-      return 'const ${SchemaAnalyzer.dartTypeName(name)}Converter().toJson($v)';
-    }
-    if (TypeRegistry.inputTypes.contains(name)) return '$v.toJson()';
-    return v;
   }
 
   // ---------------------------------------------------------------------------
@@ -584,121 +530,6 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
   // Type helpers
   // ---------------------------------------------------------------------------
 
-  /// Dart type for a GraphQL output type. In legacy (non-strict) mode every
-  /// level is nullable, matching previous releases.
-  static String _outputDartType(TypeNode type,
-      {required bool legacy, bool forceNullable = false}) {
-    final nullable = forceNullable || legacy || !type.isNonNull;
-    final base = type is ListTypeNode
-        ? 'List<${_outputDartType(type.type, legacy: legacy)}>'
-        : _namedDartType((type as NamedTypeNode).name.value);
-    return _nullable(base, nullable);
-  }
-
-  static String _namedDartType(String name) {
-    final known = CodegenConfigContext.scalarMapping.containsKey(name) ||
-        GraphQLConstants.scalarToDartType.containsKey(name) ||
-        const {'Decimal', 'Long', 'Byte'}.contains(name) ||
-        TypeRegistry.isEnum(name) ||
-        TypeRegistry.isCustomScalar(name) ||
-        TypeRegistry.objectTypes.contains(name) ||
-        TypeRegistry.isAbstract(name) ||
-        TypeRegistry.inputTypes.contains(name);
-    if (!known) return 'dynamic';
-    return SchemaAnalyzer.getDartType(
-        NamedTypeNode(name: NameNode(value: name), isNonNull: true));
-  }
-
-  /// Dart types a JSON value can be used as directly.
-  static bool _isJsonNative(String type) =>
-      const {'String', 'int', 'double', 'num', 'bool', 'Object', 'dynamic'}
-          .contains(type.replaceAll('?', '')) ||
-      type.startsWith('Map<') ||
-      type.startsWith('List<');
-
-  static String _nullable(String type, bool nullable) =>
-      nullable && type != 'dynamic' ? '$type?' : type;
-
-  /// Expression converting the JSON value [v] into the Dart value of [type].
-  static String _fromJsonExpr(TypeNode type, String v,
-      {required bool legacy,
-      required Set<String> definedTypes,
-      bool forceNullable = false}) {
-    final nullable = forceNullable || legacy || !type.isNonNull;
-    final String inner;
-    if (type is ListTypeNode) {
-      final item = _fromJsonExpr(type.type, 'e',
-          legacy: legacy, definedTypes: definedTypes);
-      inner = '($v as List<dynamic>).map((e) => $item).toList()';
-    } else {
-      inner =
-          _namedFromJson((type as NamedTypeNode).name.value, v, definedTypes);
-    }
-    return nullable ? '($v == null ? null : $inner)' : inner;
-  }
-
-  static String _namedFromJson(
-      String name, String v, Set<String> definedTypes) {
-    final mapped = CodegenConfigContext.scalarMapping[name];
-    if (mapped != null) {
-      final converter = CodegenConfigContext.scalarConverters[name];
-      if (converter != null) return 'const $converter().fromJson($v)';
-      switch (mapped) {
-        case 'int':
-          return 'const SafeIntConverter().fromJson($v)';
-        case 'double':
-          return 'const SafeDoubleConverter().fromJson($v)';
-        case 'bool':
-          return 'const SafeBoolConverter().fromJson($v)';
-        case 'String':
-          return 'const SafeStringConverter().fromJson($v)';
-        case 'DateTime':
-          return 'const DateTimeConverter().fromJson($v)';
-        default:
-          return _isJsonNative(mapped)
-              ? '$v as $mapped'
-              : '$mapped.fromJson($v)';
-      }
-    }
-    // A schema type named like a built-in scalar (e.g. `type Decimal`) is
-    // handled as the type the generator declares for it.
-    switch (TypeRegistry.declaresType(name) ? '' : name) {
-      case 'Int':
-      case 'Short':
-        return 'const SafeIntConverter().fromJson($v)';
-      case 'Float':
-        return 'const SafeDoubleConverter().fromJson($v)';
-      case 'Boolean':
-        return 'const SafeBoolConverter().fromJson($v)';
-      case 'String':
-      case 'ID':
-        return 'const SafeStringConverter().fromJson($v)';
-      case 'DateTime':
-        return 'const DateTimeConverter().fromJson($v)';
-      case 'LocalDate':
-        return 'const LocalDateConverter().fromJson($v)';
-      case 'Decimal':
-        return 'const SafeDecimalConverter().fromJson($v)';
-      case 'Long':
-        return 'const LongConverter().fromJson($v)';
-      case 'Byte':
-        return 'const ByteConverter().fromJson($v)';
-    }
-    final dartName = SchemaAnalyzer.dartTypeName(name);
-    if (TypeRegistry.isEnum(name)) {
-      return 'const ${dartName}Converter().fromJson($v as String)';
-    }
-    if (TypeRegistry.isCustomScalar(name)) {
-      return 'const ${dartName}Converter().fromJson($v)';
-    }
-    if (TypeRegistry.objectTypes.contains(name) ||
-        TypeRegistry.isAbstract(name) ||
-        definedTypes.contains(name)) {
-      return '$dartName.fromJson($v as Map<String, dynamic>)';
-    }
-    return v;
-  }
-
   /// Returns [s] as a Dart string literal (raw triple-quoted when possible).
   static String _dartStringLiteral(String s) {
     if (!s.contains('"""')) return 'r"""\n$s\n"""';
@@ -819,9 +650,9 @@ class _OperationContext {
     return _RootField(
       responseKey,
       dartFieldName(responseKey, className: resultClassName),
-      ClientExtensionGenerator._outputDartType(type,
+      JsonExprs.outputDartType(type,
           legacy: !strict, forceNullable: conditional),
-      (v) => ClientExtensionGenerator._fromJsonExpr(type, v,
+      (v) => JsonExprs.fromJsonExpr(type, v,
           legacy: !strict,
           definedTypes: definedTypes,
           forceNullable: conditional),
