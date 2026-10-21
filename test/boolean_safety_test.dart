@@ -76,22 +76,22 @@ void main() {
           reason: 'Required double fields should be marked as required');
     });
 
-    test('should handle RepertorySymptomDTO with safe converters', () {
+    test('should handle CategoryDTO with safe converters', () {
       final schema = '''
-      type RepertorySymptomDTO {
+      type CategoryDTO {
         id: Int!
         name: String!
         description: String!
-        repGlavId: Int!
+        sectionId: Int!
         parentId: Int
         hasChildren: Boolean!
-        isRegistered: Boolean!
-        degree: Int!
-        drugsCount: Int!
-        drugs: [RepertoryDrugDTO!]!
+        isFeatured: Boolean!
+        rank: Int!
+        productsCount: Int!
+        products: [ProductDTO!]!
       }
       
-      type RepertoryDrugDTO {
+      type ProductDTO {
         id: Int!
         name: String!
       }
@@ -108,22 +108,22 @@ void main() {
       // Check that fields remain as non-nullable types
       expect(generatedCode, contains('bool hasChildren;'),
           reason: 'hasChildren should remain bool (converter handles safety)');
-      expect(generatedCode, contains('bool isRegistered;'),
-          reason: 'isRegistered should remain bool (converter handles safety)');
-      expect(generatedCode, contains('int degree;'),
-          reason: 'degree should remain int (converter handles safety)');
-      expect(generatedCode, contains('int drugsCount;'),
-          reason: 'drugsCount should remain int (converter handles safety)');
+      expect(generatedCode, contains('bool isFeatured;'),
+          reason: 'isFeatured should remain bool (converter handles safety)');
+      expect(generatedCode, contains('int rank;'),
+          reason: 'rank should remain int (converter handles safety)');
+      expect(generatedCode, contains('int productsCount;'),
+          reason: 'productsCount should remain int (converter handles safety)');
 
       // Check that fields are marked as required in constructor
       expect(generatedCode, contains('required this.hasChildren,'),
           reason: 'hasChildren should be required');
-      expect(generatedCode, contains('required this.isRegistered,'),
-          reason: 'isRegistered should be required');
-      expect(generatedCode, contains('required this.degree,'),
-          reason: 'degree should be required');
-      expect(generatedCode, contains('required this.drugsCount,'),
-          reason: 'drugsCount should be required');
+      expect(generatedCode, contains('required this.isFeatured,'),
+          reason: 'isFeatured should be required');
+      expect(generatedCode, contains('required this.rank,'),
+          reason: 'rank should be required');
+      expect(generatedCode, contains('required this.productsCount,'),
+          reason: 'productsCount should be required');
 
       // Check safe converter implementations
       expect(generatedCode, contains('if (json == null) return false;'),

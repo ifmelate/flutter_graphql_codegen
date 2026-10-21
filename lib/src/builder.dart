@@ -508,7 +508,7 @@ $usage''';
   }
 
   /// Generates the output file name based on operation name
-  /// Example: GetDrugList -> get_drug_list_graphql.g.dart
+  /// Example: GetProductList -> get_product_list_graphql.g.dart
   String _generateOutputFileName(String operationName) {
     // Respect configured file naming mode
     final base = transformFileBaseName(operationName, config.fileNaming);

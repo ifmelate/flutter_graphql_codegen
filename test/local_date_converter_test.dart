@@ -15,29 +15,29 @@ void main() {
       const schema = '''
         scalar LocalDate
 
-        input FinanceOperationsInput {
-          filterType: DateFilterTypeEnum!
+        input PaymentsInput {
+          filterType: PeriodFilterEnum!
           dateFrom: LocalDate
           dateTo: LocalDate
         }
 
         type Query {
-          financeOperations(input: FinanceOperationsInput!): FinanceOperationsResult
+          payments(input: PaymentsInput!): PaymentsResult
         }
 
-        type FinanceOperationsResult {
-          operations: [FinanceOperation!]!
+        type PaymentsResult {
+          operations: [Payment!]!
           dateFrom: LocalDate
           dateTo: LocalDate
         }
 
-        type FinanceOperation {
+        type Payment {
           value: Decimal!
           userId: Int!
           createdDate: DateTime!
         }
 
-        enum DateFilterTypeEnum {
+        enum PeriodFilterEnum {
           ALL_TIME
           LAST_YEAR
           CUSTOM_PERIOD
@@ -61,15 +61,15 @@ void main() {
           contains(
               'dynamic toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
 
-      // Check that FinanceOperationsInput uses LocalDateConverter for dateFrom and dateTo
+      // Check that PaymentsInput uses LocalDateConverter for dateFrom and dateTo
       expect(generatedTypes, contains('@LocalDateConverter()'));
 
       // Check that helper functions for LocalDate lists are generated
       expect(generatedTypes, contains('_localDateListFromJson'));
       expect(generatedTypes, contains('_localDateListToJson'));
 
-      // Verify the content contains FinanceOperationsInput class
-      expect(generatedTypes, contains('class FinanceOperationsInput'));
+      // Verify the content contains PaymentsInput class
+      expect(generatedTypes, contains('class PaymentsInput'));
     });
 
     test('should distinguish between DateTime and LocalDate converters', () {
@@ -191,7 +191,7 @@ void main() {
         scalar LocalDate
 
         input ComplexInput {
-          filterType: DateFilterTypeEnum!
+          filterType: PeriodFilterEnum!
           dateFrom: LocalDate
           dateTo: LocalDate
           createdAt: DateTime!
@@ -200,7 +200,7 @@ void main() {
           dates: [LocalDate]
         }
 
-        enum DateFilterTypeEnum {
+        enum PeriodFilterEnum {
           ALL_TIME
           CUSTOM_PERIOD
         }

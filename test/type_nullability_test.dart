@@ -21,9 +21,9 @@ void main() {
 
     test('isNonNull extension should correctly detect non-null types', () {
       final schema = '''
-      type RepertorySymptomDTO {
+      type CategoryDTO {
         hasChildren: Boolean!
-        isRegistered: Boolean!
+        isFeatured: Boolean!
         nullableBool: Boolean
         requiredString: String!
         nullableString: String
@@ -37,7 +37,7 @@ void main() {
 
       // Test each field type
       final hasChildrenField = typeDef.fields[0]; // Boolean!
-      final isRegisteredField = typeDef.fields[1]; // Boolean!
+      final isFeaturedField = typeDef.fields[1]; // Boolean!
       final nullableBoolField = typeDef.fields[2]; // Boolean
       final requiredStringField = typeDef.fields[3]; // String!
       final nullableStringField = typeDef.fields[4]; // String
@@ -46,8 +46,8 @@ void main() {
 
       expect(hasChildrenField.type.isNonNull, isTrue,
           reason: 'hasChildren should be non-null (Boolean!)');
-      expect(isRegisteredField.type.isNonNull, isTrue,
-          reason: 'isRegistered should be non-null (Boolean!)');
+      expect(isFeaturedField.type.isNonNull, isTrue,
+          reason: 'isFeatured should be non-null (Boolean!)');
       expect(nullableBoolField.type.isNonNull, isFalse,
           reason: 'nullableBool should be nullable (Boolean)');
       expect(requiredStringField.type.isNonNull, isTrue,
@@ -62,9 +62,9 @@ void main() {
 
     test('getDartType should respect GraphQL type nullability', () {
       final schema = '''
-      type RepertorySymptomDTO {
+      type CategoryDTO {
         hasChildren: Boolean!
-        isRegistered: Boolean!
+        isFeatured: Boolean!
         nullableBool: Boolean
         requiredString: String!
         nullableString: String
@@ -79,8 +79,7 @@ void main() {
       // Test getDartType for each field
       final hasChildrenType =
           SchemaAnalyzer.getDartType(typeDef.fields[0].type);
-      final isRegisteredType =
-          SchemaAnalyzer.getDartType(typeDef.fields[1].type);
+      final isFeaturedType = SchemaAnalyzer.getDartType(typeDef.fields[1].type);
       final nullableBoolType =
           SchemaAnalyzer.getDartType(typeDef.fields[2].type);
       final requiredStringType =
@@ -94,7 +93,7 @@ void main() {
 
       expect(hasChildrenType, equals('bool'),
           reason: 'Boolean! should map to bool (non-nullable)');
-      expect(isRegisteredType, equals('bool'),
+      expect(isFeaturedType, equals('bool'),
           reason: 'Boolean! should map to bool (non-nullable)');
       expect(nullableBoolType, equals('bool?'),
           reason: 'Boolean should map to bool? (nullable)');
@@ -110,9 +109,9 @@ void main() {
 
     test('full type generation should produce correct nullability', () {
       final schema = '''
-      type RepertorySymptomDTO {
+      type CategoryDTO {
         hasChildren: Boolean!
-        isRegistered: Boolean!
+        isFeatured: Boolean!
         nullableBool: Boolean
         name: String!
         description: String
@@ -132,8 +131,8 @@ void main() {
       // Check that non-null fields are marked as required in constructor
       expect(generatedCode, contains('required this.hasChildren,'),
           reason: 'hasChildren (Boolean!) should be required');
-      expect(generatedCode, contains('required this.isRegistered,'),
-          reason: 'isRegistered (Boolean!) should be required');
+      expect(generatedCode, contains('required this.isFeatured,'),
+          reason: 'isFeatured (Boolean!) should be required');
       expect(generatedCode, contains('required this.name,'),
           reason: 'name (String!) should be required');
       expect(generatedCode, contains('required this.id,'),
@@ -150,8 +149,8 @@ void main() {
       // Check field type declarations - now fields keep their original types
       expect(generatedCode, contains('bool hasChildren;'),
           reason: 'hasChildren should be bool (converter handles safety)');
-      expect(generatedCode, contains('bool isRegistered;'),
-          reason: 'isRegistered should be bool (converter handles safety)');
+      expect(generatedCode, contains('bool isFeatured;'),
+          reason: 'isFeatured should be bool (converter handles safety)');
       expect(generatedCode, contains('bool? nullableBool;'),
           reason: 'nullableBool should be bool? (nullable)');
       expect(generatedCode, contains('String name;'),
@@ -173,37 +172,34 @@ void main() {
     test('nested types with nullability should work correctly', () {
       final schema = '''
       type Query {
-        symptom: RepertorySymptomDTO!
-        optionalSymptom: RepertorySymptomDTO
+        category: CategoryDTO!
+        optionalCategory: CategoryDTO
       }
       
-      type RepertorySymptomDTO {
+      type CategoryDTO {
         hasChildren: Boolean!
-        isRegistered: Boolean!
+        isFeatured: Boolean!
         nullableBool: Boolean
-        childSymptoms: [RepertorySymptomDTO!]!
-        optionalChildSymptoms: [RepertorySymptomDTO]
+        childCategories: [CategoryDTO!]!
+        optionalChildCategories: [CategoryDTO]
       }
       ''';
 
       final generatedCode = TypeGenerator.generateTypesFile(schema);
 
       // Check Query type fields
-      expect(generatedCode, contains('required this.symptom,'),
-          reason: 'symptom (RepertorySymptomDTO!) should be required');
-      expect(generatedCode, contains('this.optionalSymptom,'),
-          reason:
-              'optionalSymptom (RepertorySymptomDTO) should not be required');
+      expect(generatedCode, contains('required this.category,'),
+          reason: 'category (CategoryDTO!) should be required');
+      expect(generatedCode, contains('this.optionalCategory,'),
+          reason: 'optionalCategory (CategoryDTO) should not be required');
 
       // Check list types - respect schema nullability strictly
-      expect(
-          generatedCode, contains('List<RepertorySymptomDTO> childSymptoms;'),
+      expect(generatedCode, contains('List<CategoryDTO> childCategories;'),
           reason:
-              'childSymptoms should be List<RepertorySymptomDTO> for [RepertorySymptomDTO!]!');
+              'childCategories should be List<CategoryDTO> for [CategoryDTO!]!');
       expect(generatedCode,
-          contains('List<RepertorySymptomDTO?>? optionalChildSymptoms;'),
-          reason:
-              'optionalChildSymptoms should be List<RepertorySymptomDTO?>?');
+          contains('List<CategoryDTO?>? optionalChildCategories;'),
+          reason: 'optionalChildCategories should be List<CategoryDTO?>?');
     });
 
     test('TypeNodeExtensions with parsed GraphQL schema', () {

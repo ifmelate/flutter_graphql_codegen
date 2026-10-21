@@ -11,7 +11,7 @@ void main() {
         
         input TestInput {
           birthDate: DateTime!
-          birthTime: DateTime
+          startTime: DateTime
         }
         
         type TestType {
@@ -118,17 +118,17 @@ void main() {
       const schema = '''
         scalar DateTime
         
-        input DossierDTOInput {
+        input ProfileDTOInput {
           id: Int!
           birthDate: DateTime
-          birthTime: DateTime
+          startTime: DateTime
         }
       ''';
 
       final generatedTypes = TypeGenerator.generateTypesFile(schema);
 
-      // Verify DossierDTOInput uses DateTimeConverter
-      expect(generatedTypes, contains('class DossierDTOInput'));
+      // Verify ProfileDTOInput uses DateTimeConverter
+      expect(generatedTypes, contains('class ProfileDTOInput'));
       expect(generatedTypes, contains('@DateTimeConverter()'));
 
       // Test problematic dates that caused the original error - now with UTC conversion

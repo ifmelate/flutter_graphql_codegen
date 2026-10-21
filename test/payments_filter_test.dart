@@ -2,40 +2,39 @@ import 'package:test/test.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 
 void main() {
-  group('FinanceOperations Real World Test', () {
-    test('should correctly handle FinanceOperationsInput with LocalDate fields',
-        () {
+  group('Payments Real World Test', () {
+    test('should correctly handle PaymentsInput with LocalDate fields', () {
       const schema = '''
         scalar LocalDate
         scalar DateTime  
         scalar Decimal
 
-        enum DateFilterTypeEnum {
+        enum PeriodFilterEnum {
           ALL_TIME
           LAST_YEAR
           CUSTOM_PERIOD
         }
 
-        input FinanceOperationsInput {
-          filterType: DateFilterTypeEnum!
+        input PaymentsInput {
+          filterType: PeriodFilterEnum!
           dateFrom: LocalDate
           dateTo: LocalDate
         }
 
-        type FinanceOperation {
+        type Payment {
           id: Int!
           value: Decimal!
           userId: Int!
           createdDate: DateTime!
         }
 
-        type FinanceOperationsResult {
-          operations: [FinanceOperation!]!
+        type PaymentsResult {
+          operations: [Payment!]!
           totalCount: Int!
         }
 
         type Query {
-          financeOperations(input: FinanceOperationsInput!): FinanceOperationsResult
+          payments(input: PaymentsInput!): PaymentsResult
         }
       ''';
 
@@ -47,26 +46,26 @@ void main() {
       // Check LocalDateConverter is generated
       expect(generatedTypes, contains('LocalDateConverter'));
 
-      // Check FinanceOperationsInput class uses LocalDateConverter
-      expect(generatedTypes, contains('class FinanceOperationsInput'));
+      // Check PaymentsInput class uses LocalDateConverter
+      expect(generatedTypes, contains('class PaymentsInput'));
       expect(generatedTypes, contains('@LocalDateConverter()'));
 
       // Specifically check for dateFrom and dateTo fields with LocalDateConverter
-      final financeInputRegex = RegExp(
-        r'class FinanceOperationsInput[\s\S]*?}[\s\S]*?}',
+      final paymentsInputRegex = RegExp(
+        r'class PaymentsInput[\s\S]*?}[\s\S]*?}',
         multiLine: true,
       );
 
-      final match = financeInputRegex.firstMatch(generatedTypes);
+      final match = paymentsInputRegex.firstMatch(generatedTypes);
       expect(match, isNotNull);
 
-      final financeInputCode = match!.group(0)!;
-      print('FinanceOperationsInput code:');
-      print(financeInputCode);
+      final paymentsInputCode = match!.group(0)!;
+      print('PaymentsInput code:');
+      print(paymentsInputCode);
 
       // Check that dateFrom and dateTo use LocalDateConverter, not DateTimeConverter
-      expect(financeInputCode, contains('dateFrom'));
-      expect(financeInputCode, contains('dateTo'));
+      expect(paymentsInputCode, contains('dateFrom'));
+      expect(paymentsInputCode, contains('dateTo'));
 
       // Use more specific regex to find the converter for dateFrom/dateTo
       // Look for the annotation immediately before the field
@@ -75,8 +74,8 @@ void main() {
       final dateToRegex = RegExp(
           r"@JsonKey\(name: 'dateTo'\)\s+@(\w+Converter)\(\)\s+DateTime\?\s+dateTo");
 
-      final dateFromMatch = dateFromRegex.firstMatch(financeInputCode);
-      final dateToMatch = dateToRegex.firstMatch(financeInputCode);
+      final dateFromMatch = dateFromRegex.firstMatch(paymentsInputCode);
+      final dateToMatch = dateToRegex.firstMatch(paymentsInputCode);
 
       expect(dateFromMatch, isNotNull,
           reason: 'dateFrom field should have a converter');
