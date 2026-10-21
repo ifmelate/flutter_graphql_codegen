@@ -7,6 +7,7 @@ import 'code_utils.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
+import 'json_exprs.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
 
@@ -600,6 +601,21 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
         def.name.value: def,
     };
 
+    // With operation result types, results are parsed into per-operation
+    // classes; only inputs are needed here, without json_serializable.
+    if (CodegenConfigContext.operationResultTypes) {
+      final inputs = _sortedDefinitions(schemaDoc)
+          .whereType<InputObjectTypeDefinitionNode>()
+          .toList();
+      for (final definition in inputs) {
+        buffer.writeln(_generateInputClass(definition));
+      }
+      if (buffer.toString().contains('_undefined')) {
+        buffer.writeln('const _undefined = Object();');
+      }
+      return buffer.toString();
+    }
+
     for (final definition in _sortedDefinitions(schemaDoc)) {
       if (definition is ObjectTypeDefinitionNode) {
         buffer.writeln(_generateTypeDefinition(definition, schema, interfaces));
@@ -659,6 +675,204 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
       // can tell "clear it" from "leave it".
       includeIfNull: CodegenConfigContext.includeNullInputs,
     );
+  }
+
+  /// Generates a hand-written input class (operation result types): `const`
+  /// constructor, `final` fields, fromJson/toJson, value equality and a typed
+  /// copyWith. Field names, Dart types and constructor defaults match the
+  /// json_serializable classes of schema result types.
+  static String _generateInputClass(InputObjectTypeDefinitionNode node) {
+    final className = SchemaAnalyzer.dartTypeName(node.name.value);
+    final fields = [
+      for (final f in [
+        ...node.fields
+      ]..sort((a, b) => a.name.value.compareTo(b.name.value)))
+        (
+          node: f,
+          key: f.name.value,
+          name: dartFieldName(f.name.value, className: className),
+          type: SchemaAnalyzer.getDartType(f.type),
+        ),
+    ];
+    final names = fields.map((f) => f.name).toSet();
+    String unused(String name) {
+      while (names.contains(name)) {
+        name = '${name}_';
+      }
+      return name;
+    }
+
+    final other = unused('other');
+    final value = unused('value');
+    // A field named `copyWith` would clash with the getter, one named
+    // `identical` would hide the function the copy relies on.
+    final hidesIdentical = names.contains('identical');
+    final withCopy = !names.contains('copyWith') && !hidesIdentical;
+    final copyWith = '${className}_CopyWith';
+
+    final buffer = StringBuffer();
+    buffer.write(_docComment(node.description));
+    buffer.writeln('class $className {');
+    for (final f in fields) {
+      buffer.write(_docComment(f.node.description,
+          directives: f.node.directives, indent: '  '));
+      buffer.write(_deprecation(f.node.directives, indent: '  '));
+      buffer.writeln('  final ${f.type} ${f.name};');
+    }
+    buffer.writeln();
+    buffer.writeln('  const $className({');
+    for (final f in fields) {
+      if (f.type.startsWith('List<')) {
+        buffer.writeln('    this.${f.name} = const [],');
+      } else if (f.type.endsWith('?') || f.type == 'dynamic') {
+        buffer.writeln('    this.${f.name},');
+      } else {
+        buffer.writeln('    required this.${f.name},');
+      }
+    }
+    buffer.writeln('  });');
+    buffer.writeln();
+
+    buffer
+        .writeln('  factory $className.fromJson(Map<String, dynamic> json) =>');
+    buffer.writeln('      $className(');
+    for (final f in fields) {
+      final v = "json['${f.key}']";
+      final type = f.node.type;
+      // Like json_serializable's `defaultValue`, a missing list is empty.
+      final expr = type is ListTypeNode
+          ? '$v == null ? const <${_listElementType(f.type)}>[] : '
+              '${_inputFromJson(type, v, nullable: false)}'
+          : _inputFromJson(type, v, parenthesize: false);
+      buffer.writeln('        ${f.name}: $expr,');
+    }
+    buffer.writeln('      );');
+    buffer.writeln();
+
+    // Null fields are left out unless include_null_inputs is on, so the
+    // server can tell "clear it" from "leave it".
+    final includeNull = CodegenConfigContext.includeNullInputs;
+    buffer.writeln('  Map<String, dynamic> toJson() => {');
+    for (final f in fields) {
+      final type = f.node.type;
+      if (!_inputNullable(type)) {
+        buffer.writeln("        '${f.key}': ${_inputToJson(type, f.name)},");
+        continue;
+      }
+      final conv = _inputToJson(type, value);
+      if (includeNull) {
+        buffer.writeln(conv == value
+            ? "        '${f.key}': ${f.name},"
+            : "        '${f.key}': switch (${f.name}) "
+                '{ final $value? => $conv, null => null },');
+      } else {
+        buffer.writeln(
+            "        if (${f.name} case final $value?) '${f.key}': $conv,");
+      }
+    }
+    buffer.writeln('      };');
+    buffer.writeln();
+
+    if (withCopy) {
+      buffer.writeln('  $copyWith get copyWith => _$copyWith(this);');
+      buffer.writeln();
+    }
+
+    bool isList(String type) => type.startsWith('List<');
+    buffer.writeln('  @override');
+    buffer.writeln('  bool operator ==(Object $other) =>');
+    if (!hidesIdentical) buffer.writeln('      identical(this, $other) ||');
+    buffer.write('      $other is $className');
+    for (final f in fields) {
+      buffer.write(isList(f.type)
+          ? ' &&\n          graphqlDeepEquals(${f.name}, $other.${f.name})'
+          : ' &&\n          ${f.name} == $other.${f.name}');
+    }
+    buffer.writeln(';');
+    buffer.writeln();
+    buffer.writeln('  @override');
+    buffer.writeln('  int get hashCode => Object.hashAll([');
+    for (final f in fields) {
+      buffer.writeln(isList(f.type)
+          ? '        graphqlDeepHash(${f.name}),'
+          : '        ${f.name},');
+    }
+    buffer.writeln('      ]);');
+    buffer.writeln('}');
+    buffer.writeln();
+
+    if (withCopy) {
+      String param(String type) => JsonExprs.withNullability(
+          type.endsWith('?') ? type.substring(0, type.length - 1) : type, true);
+      buffer.writeln('/// Copies a [$className], changing the given fields '
+          '(`null` included).');
+      buffer.writeln('abstract class $copyWith {');
+      buffer.writeln('  $className call({');
+      for (final f in fields) {
+        buffer.writeln('    ${param(f.type)} ${f.name},');
+      }
+      buffer.writeln('  });');
+      buffer.writeln('}');
+      buffer.writeln();
+      buffer.writeln('class _$copyWith implements $copyWith {');
+      buffer.writeln('  const _$copyWith(this._value);');
+      buffer.writeln();
+      buffer.writeln('  final $className _value;');
+      buffer.writeln();
+      buffer.writeln('  @override');
+      buffer.writeln('  $className call({');
+      for (final f in fields) {
+        buffer.writeln('    Object? ${f.name} = _undefined,');
+      }
+      buffer.writeln('  }) =>');
+      buffer.writeln('      $className(');
+      for (final f in fields) {
+        final cast = f.type == 'dynamic' ? '' : ' as ${f.type}';
+        buffer.writeln('        ${f.name}: identical(${f.name}, _undefined) '
+            '? _value.${f.name} : ${f.name}$cast,');
+      }
+      buffer.writeln('      );');
+      buffer.writeln('}');
+      buffer.writeln();
+    }
+    return buffer.toString();
+  }
+
+  /// Whether the Dart type of input [type] is nullable; in legacy mode lists
+  /// always are (see [SchemaAnalyzer.getDartType]).
+  static bool _inputNullable(TypeNode type) =>
+      !type.isNonNull ||
+      (type is ListTypeNode && !CodegenConfigContext.strictNullability);
+
+  /// `T` of a Dart `List<T>` / `List<T>?` type.
+  static String _listElementType(String listType) =>
+      listType.substring(5, listType.length - (listType.endsWith('?') ? 2 : 1));
+
+  /// Expression converting the JSON value [v] into the Dart value of input
+  /// [type]; [nullable] defaults to the nullability of the Dart type.
+  static String _inputFromJson(TypeNode type, String v,
+      {bool? nullable, bool parenthesize = true}) {
+    final String inner;
+    if (type is ListTypeNode) {
+      final item = _inputFromJson(type.type, 'e');
+      inner = '($v as List<dynamic>).map((e) => $item).toList()';
+    } else {
+      inner = JsonExprs.namedFromJson(
+          (type as NamedTypeNode).name.value, v, TypeRegistry.inputTypes);
+    }
+    if (!(nullable ?? _inputNullable(type))) return inner;
+    final check = '$v == null ? null : $inner';
+    return parenthesize ? '($check)' : check;
+  }
+
+  /// Expression serialising the non-null value [v] of input [type].
+  static String _inputToJson(TypeNode type, String v) {
+    if (type is! ListTypeNode) return JsonExprs.toJsonExpr(type, v);
+    final item = _inputToJson(type.type, 'e');
+    if (item == 'e') return v;
+    final itemExpr =
+        _inputNullable(type.type) ? '(e == null ? null : $item)' : item;
+    return '$v.map((e) => $itemExpr).toList()';
   }
 
   /// Generates an abstract class for a GraphQL interface plus an `Unknown*`
