@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-10-21
+
+### Changed
+- A `null` in a nullable `DateTime`, `LocalDate`, `Decimal`, `Long`, `Byte` or
+  custom scalar field (or list element) now stays `null`. It used to become
+  `DateTime.now()`, `Decimal('0')`, `Byte(0)` or a wrapper around `null`.
+  Non-nullable fields behave as before
+- A field named like a type now gets a trailing underscore (`Media_`), also
+  when that type isn't used in the class
+
+### Fixed
+- Fields, variables and enum values starting with an underscore (`_id`)
+  generated private named parameters that don't compile; they are now `id_`
+- A field named like a type (`int: Int`, `String: String`, `Media: Media`)
+  shadowed the type and didn't compile
+- Lists of custom or built-in scalars with nullable elements (`[Custom]`,
+  `[DateTime]`) and nested lists (`[[DateTime]]`) didn't compile
+
 ## [2.3.0] - 2026-10-17
 
 ### Added
