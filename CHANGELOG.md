@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empty types (`type Mutation {}`), unions and enums, and an interface listed
   twice in `implements` produced code that didn't compile. The build now fails
   with `SCH402`, listing every such type
+- Operations selecting the introspection fields `__schema` or `__type` failed
+  with `BLD103`. Their result is now the raw JSON (`Map<String, dynamic>?`),
+  since those types aren't part of the SDL
 
 ## [2.4.1] - 2026-10-21
 

@@ -41,7 +41,7 @@ class ClientExtensionGenerator {
     );
     return '''${CodeGenerationConstants.generatedFileWarning}
 // Operation: $operationName (${operation.type.name})
-${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}${scalarImports.isEmpty ? '' : ', unused_import'}
+${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, unused_import
 
 import 'package:graphql/client.dart' as graphql;
 import 'types.dart';
@@ -743,6 +743,17 @@ class _OperationContext {
   _RootField _rootField(FieldNode sel, ObjectTypeDefinitionNode rootType,
       Set<String> definedTypes) {
     final fieldName = sel.name.value;
+    // Introspection fields: their types aren't in the SDL, so the result is
+    // the raw JSON.
+    if (fieldName == '__schema' || fieldName == '__type') {
+      final responseKey = sel.alias?.value ?? fieldName;
+      return _RootField(
+        responseKey,
+        dartFieldName(responseKey, className: resultClassName),
+        'Map<String, dynamic>?',
+        (v) => '$v as Map<String, dynamic>?',
+      );
+    }
     final schemaField =
         rootType.fields.where((f) => f.name.value == fieldName).firstOrNull;
     if (schemaField == null) {

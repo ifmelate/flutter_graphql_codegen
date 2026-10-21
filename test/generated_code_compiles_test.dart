@@ -545,11 +545,16 @@ query Fragment { a }
 query Link { a }
 mutation Mutate { b }
 subscription Subscribe { c }
+query Introspection {
+  __schema { queryType { name } }
+  __type(name: "Query") { name }
+}
 ''',
 ];
 
 const _clientNamesMain = r'''
 import 'package:fgc_compile_check/client_names/Fragment.g.dart';
+import 'package:fgc_compile_check/client_names/Introspection.g.dart';
 import 'package:fgc_compile_check/client_names/Link.g.dart';
 import 'package:fgc_compile_check/client_names/Mutate.g.dart';
 import 'package:fgc_compile_check/client_names/Query.g.dart';
@@ -594,6 +599,16 @@ Future<void> main() async {
   check((await client.link_()).data!['a'] == 1, 'link_');
   check(await client.mutateData() == 2, 'mutate_');
   check(await client.subscribeData().first == 3, 'subscribe_');
+
+  // __schema and __type aren't in the SDL; they stay raw JSON.
+  final meta = parseIntrospectionData({
+    '__schema': {
+      'queryType': {'name': 'Query'}
+    },
+    '__type': {'name': 'Query'},
+  });
+  check(meta.schema__!['queryType']['name'] == 'Query', '__schema');
+  check(meta.type__!['name'] == 'Query', '__type');
   print('CLIENT NAMES OK');
 }
 ''';
