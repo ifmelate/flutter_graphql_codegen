@@ -383,6 +383,127 @@ void main() {
 }
 ''';
 
+// Names Dart can't use as they are (`_id`, a field named like a type) and
+// lists of converted scalars with nullable elements, nested lists included.
+const _edgeSchema = r'''
+scalar Custom
+scalar DateTime
+scalar LocalDate
+scalar Decimal
+type Media { id: ID! title: String }
+type Thing {
+  _id: ID!
+  int: Int
+  String: String
+  Media: Media
+  customs: [Custom]
+  customGrid: [[Custom]]
+  dates: [DateTime]
+  dateGrid: [[DateTime!]]
+  days: [LocalDate]
+  amounts: [Decimal]
+}
+input ThingInput {
+  _id: ID!
+  int: Int
+  String: String
+  customs: [Custom]
+  dates: [DateTime]
+}
+enum Kind { visible _hidden }
+type Query {
+  Media(_id: ID): Media
+  thing(input: ThingInput): Thing
+  kinds: [Kind!]!
+  grid: [[Custom]]
+}
+''';
+
+const _edgeDocuments = [
+  r'''
+query EdgeCases($_id: ID, $input: ThingInput) {
+  Media(_id: $_id) { id title }
+  thing(input: $input) {
+    _id int String Media { id } customs customGrid dates dateGrid days amounts
+  }
+  kinds
+  grid
+}
+''',
+];
+
+const _edgeMain = r'''
+import 'package:fgc_compile_check/edge/EdgeCases.g.dart';
+import 'package:fgc_compile_check/edge/types.dart';
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: $message');
+}
+
+void main() {
+  final data = parseEdgeCasesData({
+    'Media': {'__typename': 'Media', 'id': 'm1', 'title': 'T'},
+    'thing': {
+      '__typename': 'Thing',
+      '_id': 't1',
+      'int': 3,
+      'String': 's',
+      'Media': {'__typename': 'Media', 'id': 'm2'},
+      'customs': ['a', null, {'k': 1}],
+      'customGrid': [['a', null], null],
+      'dates': ['2024-01-02T03:04:05Z', null],
+      'dateGrid': [['2024-01-02T03:04:05Z']],
+      'days': ['2024-01-02', null],
+      'amounts': ['1.5', null],
+    },
+    'kinds': ['visible', '_hidden'],
+    'grid': [['g'], null],
+  });
+  check(data.Media_!.id == 'm1', 'field named like its type');
+  final thing = data.thing!;
+  check(thing.id_ == 't1', '_id field');
+  check(thing.int_ == 3 && thing.String_ == 's', 'fields named int/String');
+  check(thing.Media_!.id == 'm2', 'nested field named like its type');
+  check(thing.customs![0]!.value == 'a' && thing.customs![1] == null,
+      'list of nullable custom scalars');
+  check(thing.customs![2]!.raw is Map, 'custom scalar keeps raw JSON');
+  check(thing.customGrid![0]![0]!.value == 'a' &&
+          thing.customGrid![0]![1] == null &&
+          thing.customGrid![1] == null,
+      'nested list of custom scalars');
+  check(thing.dates![0]!.year == 2024 && thing.dates![1] == null,
+      'list of nullable DateTime');
+  check(thing.dateGrid![0]![0].year == 2024, 'nested DateTime list');
+  check(thing.days![0]!.day == 2 && thing.days![1] == null, 'LocalDate list');
+  check(thing.amounts![0]!.value == '1.5' && thing.amounts![1] == null,
+      'Decimal list');
+  check(data.kinds[1] == Kind.hidden_, 'enum value with underscore');
+  check(data.grid![0]![0]!.value == 'g' && data.grid![1] == null,
+      'root nested list of custom scalars');
+
+  final vars = EdgeCasesVariables(
+    id_: 'x',
+    input: ThingInput(
+      id_: 't',
+      int_: 1,
+      String_: 'y',
+      customs: [const Custom('c'), null],
+      dates: [DateTime.utc(2024, 5, 1), null],
+    ),
+  ).toJson();
+  check(vars['_id'] == 'x', '_id variable keeps its GraphQL name');
+  final input = vars['input'] as Map<String, dynamic>;
+  check(input['_id'] == 't' && input['int'] == 1 && input['String'] == 'y',
+      'escaped input fields keep their GraphQL names');
+  check(input['customs'][0] == 'c' && input['customs'][1] == null,
+      'custom scalar list serialized');
+  check(input['dates'][0] == '2024-05-01T00:00:00.000Z' &&
+          input['dates'][1] == null,
+      'DateTime list serialized');
+  print('EDGE OK');
+}
+''';
+
 // scalar_mapping with imports: a converter (Money), a type with
 // fromJson/toJson (Cents) and the short form (Date: DateTime).
 const _mappedLibrary = r'''
@@ -500,6 +621,8 @@ void main() {
       ..._generate('fallback', _smokeSchema, _smokeDocuments,
           strict: true, unknownEnumFallback: true, deprecatedAnnotations: true),
       ..._generate('collide', _collideSchema, _collideDocuments, strict: true),
+      ..._generate('edge', _edgeSchema, _edgeDocuments, strict: true),
+      ..._generate('edge_legacy', _edgeSchema, _edgeDocuments, strict: false),
       ..._generate('mapped', _mappedSchema, _mappedDocuments,
           strict: true,
           scalarMapping: {
@@ -519,6 +642,7 @@ void main() {
       'bin/smoke.dart': _smokeMain,
       'bin/fallback.dart': _fallbackMain,
       'bin/collide.dart': _collideMain,
+      'bin/edge.dart': _edgeMain,
     };
 
     final result = await compileGenerated(
@@ -528,6 +652,7 @@ void main() {
         'bin/fallback.dart',
         'bin/collide.dart',
         'bin/mapped.dart',
+        'bin/edge.dart',
       ],
       // json_serializable's output uses deprecated members when they are
       // annotated; that trade-off of deprecated_annotations is documented.

@@ -40,6 +40,7 @@ class TypeGenerator {
         DocumentUtils.mergeSchemaExtensions(gql_lang.parseString(schema));
     SchemaAnalyzer.extractCustomTypesAndEnums(schemaDoc);
     _checkStrictScalars();
+    _nullableConverters.clear();
     final needsConvert = _wrappedScalars(TypeRegistry.customScalars).isNotEmpty;
     final scalarConverters =
         _generateScalarConverters(TypeRegistry.customScalars);
@@ -294,9 +295,7 @@ $typeDefinitions
 
 ${_generatePossibleTypes()}
 
-// Helper functions for list conversions
-${_generateListConverterHelpers(TypeRegistry.customScalars)}
-''';
+${_generateNullableConverters()}''';
   }
 
   /// `import` lines for the libraries of mapped scalar types.
@@ -826,43 +825,22 @@ class $unknownName implements $name {
           5, fieldType.length - (fieldType.endsWith('>?') ? 2 : 1));
       final cleanInnerType = innerType.replaceAll('?', '');
 
-      // json_serializable applies a field's converter to list elements.
-      if (mappedConverter != null) {
+      // json_serializable applies a field's converter to the elements of
+      // (nested) lists. The built-in converters take `dynamic` and turn null
+      // into a value, so nullable elements get a wrapper that keeps null.
+      var elementConverter = mappedConverter;
+      if (elementConverter == null) {
+        final converter = _listElementConverter(graphqlBase, baseType);
+        if (converter != null) {
+          elementConverter = fieldType.contains('$baseType?')
+              ? _nullableConverter(converter, baseType)
+              : converter;
+        }
+      }
+      if (elementConverter != null) {
         return [
           '  @JsonKey(${nameArg}defaultValue: const <$innerType>[])',
-          '  @$mappedConverter()',
-        ];
-      }
-
-      if (TypeRegistry.isWrappedScalar(graphqlBase)) {
-        // For lists of custom scalars, use JsonKey with converter
-        final helper = cleanInnerType.toLowerCase();
-        return [
-          '  @JsonKey(${nameArg}defaultValue: const <$cleanInnerType>[], fromJson: _${helper}ListFromJson, toJson: _${helper}ListToJson)'
-        ];
-      }
-      if (cleanInnerType == 'DateTime') {
-        // Distinguish between DateTime and LocalDate list elements
-        final helper = getOriginalGraphQLType(type) == 'LocalDate'
-            ? 'localDate'
-            : 'dateTime';
-        return [
-          '  @JsonKey(${nameArg}defaultValue: const <DateTime>[], fromJson: _${helper}ListFromJson, toJson: _${helper}ListToJson)'
-        ];
-      }
-      if (cleanInnerType == 'LocalDate') {
-        return [
-          '  @JsonKey(${nameArg}defaultValue: const <DateTime>[], fromJson: _localDateListFromJson, toJson: _localDateListToJson)'
-        ];
-      }
-      if (cleanInnerType == 'Decimal') {
-        return [
-          '  @JsonKey(${nameArg}defaultValue: const <Decimal>[], fromJson: _decimalListFromJson, toJson: _decimalListToJson)'
-        ];
-      }
-      if (cleanInnerType == 'Byte') {
-        return [
-          '  @JsonKey(${nameArg}defaultValue: const <Byte>[], fromJson: _byteListFromJson, toJson: _byteListToJson)'
+          '  @$elementConverter()',
         ];
       }
       // Regular lists (enums, objects, built-in scalars): default value only
@@ -901,6 +879,54 @@ class $unknownName implements $name {
       return withName('  @SafeDoubleConverter()');
     }
     return [if (needsJsonKeyName) nameKey];
+  }
+
+  /// Converter for the elements of a list of [baseType], or null when
+  /// json_serializable handles the elements itself.
+  static String? _listElementConverter(String graphqlBase, String baseType) {
+    if (TypeRegistry.isWrappedScalar(graphqlBase)) {
+      return '${baseType}Converter';
+    }
+    return switch (baseType) {
+      'DateTime' when graphqlBase == 'LocalDate' => 'LocalDateConverter',
+      'DateTime' => 'DateTimeConverter',
+      'Decimal' => 'SafeDecimalConverter',
+      'Long' => 'LongConverter',
+      'Byte' => 'ByteConverter',
+      _ => null,
+    };
+  }
+
+  /// Nullable wrappers used by the current types file: class name -> (inner
+  /// converter, Dart type).
+  static final Map<String, (String, String)> _nullableConverters = {};
+
+  static String _nullableConverter(String converter, String dartType) {
+    final name = '_Nullable$converter';
+    _nullableConverters[name] = (converter, dartType);
+    return name;
+  }
+
+  static String _generateNullableConverters() {
+    final buffer = StringBuffer();
+    final names = _nullableConverters.keys.toList()..sort();
+    for (final name in names) {
+      final (converter, type) = _nullableConverters[name]!;
+      buffer.writeln('''
+class $name implements JsonConverter<$type?, dynamic> {
+  const $name();
+
+  @override
+  $type? fromJson(dynamic json) =>
+      json == null ? null : const $converter().fromJson(json);
+
+  @override
+  dynamic toJson($type? object) =>
+      object == null ? null : const $converter().toJson(object);
+}
+''');
+    }
+    return buffer.toString();
   }
 
   /// Determines if a field name needs explicit JsonKey annotation to preserve naming
@@ -1063,81 +1089,6 @@ class $unknownName implements $name {
         buffer.writeln(generateClassForType(definition));
       }
     }
-
-    return buffer.toString();
-  }
-
-  /// Generates helper functions for list conversions
-  static String _generateListConverterHelpers(Set<String> customScalars) {
-    final buffer = StringBuffer();
-
-    // Generate helpers for each custom scalar type
-    for (final scalar in _wrappedScalars(customScalars)) {
-      final name = SchemaAnalyzer.dartTypeName(scalar);
-      buffer.writeln('''
-// Helper functions for $scalar list conversion
-List<$name> _${name.toLowerCase()}ListFromJson(List<dynamic>? json) {
-  if (json == null) return const [];
-  return json.map((item) => $name(item)).toList();
-}
-
-List<dynamic>? _${name.toLowerCase()}ListToJson(List<$name>? list) {
-  if (list == null) return null;
-  return list.map((item) => item.raw).toList();
-}
-''');
-    }
-
-    // Helper for DateTime lists
-    buffer.writeln('''
-// Helper functions for DateTime list conversion
-List<DateTime> _dateTimeListFromJson(List<dynamic>? json) {
-  if (json == null) return const [];
-  return json.map((item) => DateTime.parse(item.toString())).toList();
-}
-
-List<String>? _dateTimeListToJson(List<DateTime>? list) {
-  if (list == null) return null;
-  // Same wire format as DateTimeConverter: UTC ISO-8601 with timezone.
-  return list.map((item) => item.toUtc().toIso8601String()).toList();
-}
-
-// Helper functions for LocalDate list conversion
-List<DateTime> _localDateListFromJson(List<dynamic>? json) {
-  if (json == null) return const [];
-  return json.map((item) => DateTime.parse(item.toString())).toList();
-}
-
-List<String>? _localDateListToJson(List<DateTime>? list) {
-  if (list == null) return null;
-  return list.map((item) => item.toIso8601String().split('T').first).toList();
-}
-''');
-
-    // Helper for Decimal lists
-    buffer.writeln('''
-// Helper functions for Decimal list conversion
-List<Decimal> _decimalListFromJson(List<dynamic>? json) {
-  if (json == null) return const [];
-  return json.map((item) => Decimal(item.toString())).toList();
-}
-
-List<String>? _decimalListToJson(List<Decimal>? list) {
-  if (list == null) return null;
-  return list.map((item) => item.toString()).toList();
-}
-
-// Helper functions for Byte list conversion
-List<Byte> _byteListFromJson(List<dynamic>? json) {
-  if (json == null) return const <Byte>[];
-  return json.map((item) => Byte.parse(item)).toList();
-}
-
-List<dynamic>? _byteListToJson(List<Byte>? list) {
-  if (list == null) return null;
-  return list.map((item) => item.value).toList();
-}
-''');
 
     return buffer.toString();
   }

@@ -54,7 +54,7 @@ void main() {
     expect(types, contains('class Object_ {'));
     expect(types, contains('class Object_Converter '));
     expect(types, contains('  @Object_Converter()\n  Object_? obj;'));
-    expect(types, contains('_object_ListFromJson'));
+    expect(types, contains('  @Object_Converter()\n  List<Object_>'));
   });
 
   test('__typename dispatch and possibleTypes keep the GraphQL names', () {

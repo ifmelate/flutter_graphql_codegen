@@ -64,10 +64,6 @@ void main() {
       // Check that PaymentsInput uses LocalDateConverter for dateFrom and dateTo
       expect(generatedTypes, contains('@LocalDateConverter()'));
 
-      // Check that helper functions for LocalDate lists are generated
-      expect(generatedTypes, contains('_localDateListFromJson'));
-      expect(generatedTypes, contains('_localDateListToJson'));
-
       // Verify the content contains PaymentsInput class
       expect(generatedTypes, contains('class PaymentsInput'));
     });
@@ -147,25 +143,22 @@ void main() {
 
       final generatedTypes = TypeGenerator.generateTypesFile(schema);
 
-      // Check that helper functions for LocalDate lists are generated
+      // List elements go through LocalDateConverter; nullable elements
+      // through a wrapper that keeps null.
       expect(
           generatedTypes,
-          contains(
-              'List<DateTime> _localDateListFromJson(List<dynamic>? json)'));
-      expect(generatedTypes,
-          contains('List<String>? _localDateListToJson(List<DateTime>? list)'));
-
-      // Check that helper function returns date-only format
+          contains("defaultValue: const <DateTime>[])\n"
+              '  @LocalDateConverter()\n'
+              '  List<DateTime> dates;'));
       expect(
           generatedTypes,
-          contains(
-              'return list.map((item) => item.toIso8601String().split(\'T\').first).toList();'));
-
-      // Check that list fields use proper JsonKey annotations
+          contains("defaultValue: const <DateTime?>[])\n"
+              '  @_NullableLocalDateConverter()\n'
+              '  List<DateTime?>? optionalDates;'));
       expect(
           generatedTypes,
-          contains(
-              'fromJson: _localDateListFromJson, toJson: _localDateListToJson'));
+          contains('class _NullableLocalDateConverter '
+              'implements JsonConverter<DateTime?, dynamic>'));
     });
 
     test('should generate correct Dart types for LocalDate', () {

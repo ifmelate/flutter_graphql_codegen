@@ -1,5 +1,7 @@
 library;
 
+import 'code_utils.dart';
+
 String toSnakeCase(String input) {
   return input
       .replaceAllMapped(RegExp(r'(?<!^)(?=[A-Z])'), (m) => '_')
@@ -59,23 +61,53 @@ const Set<String> _generatedClassMemberNames = {'toJson', 'fromJson'};
 /// Members every Dart enum has.
 const Set<String> _enumMemberNames = {'values', 'index', 'name'};
 
+/// Leading underscores make a Dart name private, which a named parameter can't
+/// be, so they move to the end (`_id` -> `id_`).
+String? _publicName(String graphqlName) {
+  if (!graphqlName.startsWith('_')) return null;
+  final stripped = graphqlName.replaceFirst(RegExp('^_+'), '');
+  final suffix = '_' * (graphqlName.length - stripped.length);
+  return stripped.isEmpty ? 'value$suffix' : '$stripped$suffix';
+}
+
+/// Whether [name] is a Dart type the generated code may refer to. A member
+/// with that name would shadow the type inside its class (`Media? Media;`).
+bool _isTypeName(String name) {
+  if (reservedTypeNames.contains(name) || TypeRegistry.declaresType(name)) {
+    return true;
+  }
+  // Escaped Dart name of a schema type such as `Map` -> `Map_`.
+  if (!name.endsWith('_')) return false;
+  final base = name.substring(0, name.length - 1);
+  return reservedTypeNames.contains(base) && TypeRegistry.declaresType(base);
+}
+
 /// Returns a valid Dart identifier for a GraphQL field or variable name.
 ///
-/// Reserved words and names that clash with built-in members get a trailing
-/// underscore (`class` -> `class_`). [className] guards against a member having
-/// the same name as its enclosing class, which Dart does not allow.
+/// Reserved words and names that clash with built-in members or types get a
+/// trailing underscore (`class` -> `class_`, `int` -> `int_`), and leading
+/// underscores move to the end (`_id` -> `id_`). [className] guards against a
+/// member having the same name as its enclosing class, which Dart does not
+/// allow.
 String dartFieldName(String graphqlName, {String? className}) {
-  if (dartReservedWords.contains(graphqlName) ||
-      _objectMemberNames.contains(graphqlName) ||
-      _generatedClassMemberNames.contains(graphqlName) ||
-      graphqlName == className) {
-    return '${graphqlName}_';
+  var name = _publicName(graphqlName) ?? graphqlName;
+  if (name == graphqlName &&
+      (dartReservedWords.contains(name) ||
+          _objectMemberNames.contains(name) ||
+          _generatedClassMemberNames.contains(name) ||
+          name == className)) {
+    name = '${name}_';
   }
-  return graphqlName;
+  while (_isTypeName(name) || name == className) {
+    name = '${name}_';
+  }
+  return name;
 }
 
 /// Returns a valid Dart identifier for a GraphQL enum value.
 String dartEnumValueName(String graphqlValue) {
+  final public = _publicName(graphqlValue);
+  if (public != null) return public;
   if (dartReservedWords.contains(graphqlValue) ||
       _objectMemberNames.contains(graphqlValue) ||
       _enumMemberNames.contains(graphqlValue)) {
