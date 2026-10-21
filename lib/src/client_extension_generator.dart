@@ -5,6 +5,7 @@ import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 import 'code_utils.dart';
 import 'config_context.dart';
+import 'declarations.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
 import 'document_validator.dart';
@@ -97,7 +98,22 @@ $body''';
         ..write(_fragmentCacheExtension(types, name));
     }
     buffer.write(types.support);
-    return buffer.toString();
+    final code = buffer.toString();
+
+    // Classes are checked by checkFragments; this catches constants and
+    // extensions, e.g. of names differing only in the case of the first
+    // letter (`userBits` and `UserBits` both declare `userBitsFragment`).
+    final seen = <String>{};
+    for (final name in topLevelDeclarations(code)) {
+      if (!seen.add(name)) {
+        throw CodegenException(
+          CodegenErrorCodes.buildDuplicateFragment,
+          'fragments.dart would declare "$name" twice, for two fragments '
+          'with similar names; rename one of them',
+        );
+      }
+    }
+    return code;
   }
 
   /// `read<Fragment>Fragment` / `write<Fragment>Fragment` on

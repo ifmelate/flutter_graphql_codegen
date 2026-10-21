@@ -298,6 +298,17 @@ void main() {
       expect(code, contains('writeUserBitsFragment('));
     });
 
+    test('fragments declaring the same constant are reported', () {
+      // Both declare userBitsFragment and UserBitsFragmentExtension.
+      expect(
+          () => _fragments('fragment userBits on User { id }\n'
+              'fragment UserBits on User { name }'),
+          throwsA(isA<CodegenException>()
+              .having((e) => e.code, 'code', 'BLD102')
+              .having((e) => e.message, 'message',
+                  contains('"userBitsFragment" twice'))));
+    });
+
     test('fragments on introspection types are skipped', () {
       const fullType = 'fragment FullType on __Type { name kind '
           'fields { name } ...TypeRef }\n'
