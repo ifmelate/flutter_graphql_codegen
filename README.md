@@ -590,7 +590,8 @@ Problems found during generation are reported with a code:
 | `BLD104` | Two operations have the same name (or names that map to the same file) |
 | `BLD105` | Unknown argument, or a required argument is missing |
 | `BLD106` | A variable is used but not declared, declared but never used, or has an unknown or non-input type |
-| `BLD107` | A selection set is missing (object field) or not allowed (scalar field), a fragment is on an unknown or non-composite type, or a fragment spreads itself |
+| `BLD107` | A selection set is missing (object field) or not allowed (scalar field), a fragment is on an unknown or non-composite type, a fragment spreads itself, or an alias starts with `__` |
+| `BLD108` | Two operations, or an operation and `fragments.dart`, would declare the same top-level name (e.g. `A_B_C` from operations `A_B` and `A`) |
 | `BLD200` | Writing `index.dart` failed |
 
 `BLD103` and `BLD105`–`BLD107` come from checking each operation against the

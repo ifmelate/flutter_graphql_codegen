@@ -66,6 +66,9 @@ the 2.x output.
   interfaces get a `<field>Raw` sibling; `toJson()` writes it back for
   `$unknown`
 - One `build_runner build` is enough on a fresh checkout (operation mode)
+- `BLD108`: two operations, or an operation and `fragments.dart`, that would
+  declare the same top-level name fail with both names in the message instead
+  of producing an `index.dart` that doesn't compile
 
 ### Changed
 - `types.dart` declares `graphqlDeepEquals` and `graphqlDeepHash`, also with
@@ -75,6 +78,11 @@ the 2.x output.
   like an enum, input or scalar declaration of `types.dart` gets a trailing
   underscore. Two fragments that would declare the same class fail with
   `BLD102`
+- Aliases starting with `__` are reserved and reported as `BLD107`. An alias
+  `__typename` on another field is reported even with
+  `validate_documents: false`, since the generated code couldn't compile
+- Fragments on introspection types (`fragment FullType on __Type`) are left
+  out of `fragments.dart`; operations using them keep returning raw maps
 
 ### Known limitations
 - With `unknown_enum_fallback`, an operation whose single root field is an enum
