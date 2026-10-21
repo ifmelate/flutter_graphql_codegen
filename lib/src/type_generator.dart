@@ -47,13 +47,17 @@ class TypeGenerator {
     final enumDefinitions = _generateEnumDefinitions(schemaDoc);
     final enumConverters = _generateEnumConverters(schemaDoc);
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc, schema);
+    // json_serializable writes types.g.dart only for annotated classes.
+    final part = typeDefinitions.contains('@JsonSerializable')
+        ? "part 'types.g.dart';"
+        : '';
 
     return '''${CodeGenerationConstants.generatedFileWarning}
 ${CodeGenerationConstants.ignoreForFile}, unused_element, unused_import, deprecated_member_use_from_same_package
 
 ${needsConvert ? "import 'dart:convert';\n\n" : ''}import 'package:json_annotation/json_annotation.dart';
 ${scalarImportDirectives()}
-part 'types.g.dart';
+$part
 
 class Decimal {
   final String value;

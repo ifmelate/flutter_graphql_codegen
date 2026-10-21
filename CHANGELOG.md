@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Subscribe`, `Link`, `Fragment`, ...) generated extension methods that the
   client's own members shadowed, and code that didn't compile. Those methods
   now get a trailing underscore (`client.query_()`, `client.readQuery_()`)
+- A schema without object or input types produced a `types.dart` with
+  `part 'types.g.dart'`, which json_serializable never writes
 
 ## [2.4.1] - 2026-10-21
 

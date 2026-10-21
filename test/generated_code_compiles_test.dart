@@ -714,6 +714,10 @@ void main() {
       ..._generate('edge_legacy', _edgeSchema, _edgeDocuments, strict: false),
       ..._generate('client_names', _clientNamesSchema, _clientNamesDocuments,
           strict: true),
+      // No object types: nothing for json_serializable, so no part file.
+      ..._generate('no_objects', 'enum Color { RED GREEN }\nscalar JSON',
+          const [],
+          strict: true),
       ..._generate('mapped', _mappedSchema, _mappedDocuments,
           strict: true,
           scalarMapping: {
