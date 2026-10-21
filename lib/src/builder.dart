@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:build/build.dart';
 import 'package:glob/glob.dart';
+import 'package:glob/list_local_fs.dart';
 import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 import 'package:flutter_graphql_codegen/src/schema_downloader.dart';
@@ -14,6 +15,7 @@ import 'package:dart_style/dart_style.dart' show FormatterException;
 import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 
+import 'code_utils.dart';
 import 'config.dart';
 import 'config_context.dart';
 import 'declarations.dart';
@@ -43,6 +45,21 @@ class _SchemaArtifacts {
   _SchemaArtifacts(this.schemaDoc, this.typesCode, this.definedTypes);
 }
 
+/// Fragments of other packages (`fragment_imports`).
+class _ImportedFragments {
+  final Map<String, FragmentDefinitionNode> fragments;
+
+  /// Fragment name -> URI of the library declaring it.
+  final Map<String, String> libraries;
+
+  /// Names declared by those libraries -> library URI.
+  final Map<String, String> declarations;
+
+  const _ImportedFragments(this.fragments, this.libraries, this.declarations);
+
+  static const none = _ImportedFragments({}, {}, {});
+}
+
 class GraphQLCodegenBuilder implements Builder {
   final GraphQLCodegenConfig config;
 
@@ -60,7 +77,12 @@ class GraphQLCodegenBuilder implements Builder {
   Version? _languageVersion;
   bool _languageVersionResolved = false;
 
-  GraphQLCodegenBuilder(this.config);
+  /// Directories of other packages by name, for `fragment_imports`; packages
+  /// not listed are looked up in `.dart_tool/package_config.json`. Meant for
+  /// tests.
+  final Map<String, String> packageRoots;
+
+  GraphQLCodegenBuilder(this.config, {this.packageRoots = const {}});
 
   @override
   FutureOr<void> build(BuildStep buildStep) async {
@@ -113,14 +135,27 @@ class GraphQLCodegenBuilder implements Builder {
     final artifacts = _artifactsFor(await _loadSchema(buildStep));
     await _writeTypesFile(artifacts.typesCode);
 
+    final imported = await _importedFragments(buildStep);
+    _importedDeclarations = imported.declarations;
     final Map<String, FragmentDefinitionNode> fragments;
+    var fragmentLibraries = const <String, String>{};
     if (operationTypes) {
       // Every document reads all fragments, so fragments.dart and the
       // classes implementing fragment interfaces follow any change.
-      fragments = await _allFragments(buildStep, document);
-      await _writeFragmentsFile(artifacts, fragments);
+      final local = await _allFragments(buildStep, document);
+      _checkImportedFragmentNames(local, imported);
+      fragments = {...imported.fragments, ...local};
+      fragmentLibraries = imported.libraries;
+      await _writeFragmentsFile(artifacts, fragments, fragmentLibraries);
     } else {
-      fragments = await _externalFragments(buildStep, document);
+      final local = await _externalFragments(buildStep, document);
+      _checkImportedFragmentNames({
+        ...local,
+        for (final f
+            in document.definitions.whereType<FragmentDefinitionNode>())
+          f.name.value: f,
+      }, imported);
+      fragments = {...imported.fragments, ...local};
     }
 
     // This document's operation files are declared anew below.
@@ -161,6 +196,7 @@ class GraphQLCodegenBuilder implements Builder {
           artifacts.schemaDoc,
           artifacts.definedTypes,
           fragments: fragments,
+          fragmentLibraries: fragmentLibraries,
           sourcePath: inputId.path,
           group: _groupOf(inputId.path),
         );
@@ -292,6 +328,7 @@ class GraphQLCodegenBuilder implements Builder {
         'rename the operation or the fragment',
       ));
     }
+    _checkImportedDeclarations('Operation "$operationName" in $source', names);
     for (final other in clashes) {
       if (!await _stillDefined(buildStep, other)) continue;
       final common = names.intersection(other.names);
@@ -358,6 +395,13 @@ class GraphQLCodegenBuilder implements Builder {
     if (assetId != null && await buildStep.canRead(assetId)) {
       return buildStep.readAsString(assetId);
     }
+    if (source.startsWith('package:')) {
+      throw _report(CodegenException(
+        CodegenErrorCodes.schemaFileNotFound,
+        'Schema file not found: $source (it must be in lib/ of a dependency '
+        'of this package)',
+      ));
+    }
 
     try {
       return await SchemaDownloader.downloadSchema(source);
@@ -378,8 +422,13 @@ class GraphQLCodegenBuilder implements Builder {
     }
   }
 
-  /// The schema as an asset of [package], if it is a path inside the package.
+  /// The schema as an asset of [package], if it is a path inside the package,
+  /// or as an asset of another package for a `package:` URI (e.g. the schema
+  /// of a package shared by several packages).
   AssetId? _schemaAssetId(String package) {
+    if (config.schemaUrl.startsWith('package:')) {
+      return _packageUriAssetId(config.schemaUrl);
+    }
     final relative = _packageRelativePath(config.schemaUrl);
     return relative == null ? null : AssetId(package, relative);
   }
@@ -493,16 +542,228 @@ class GraphQLCodegenBuilder implements Builder {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // fragment_imports: fragments generated by other packages
+  // ---------------------------------------------------------------------------
+
+  /// The fragments of `fragment_imports`, read through [buildStep] from the
+  /// other packages' `lib/` (so their changes trigger a rebuild).
+  ///
+  /// build_runner can only list the assets of the package being built, so
+  /// the files matching a `documents` glob are listed on disk (in the
+  /// package's directory from `.dart_tool/package_config.json`) and then read
+  /// through [buildStep]. A file added to the other package is picked up
+  /// once a document of this package is rebuilt.
+  Future<_ImportedFragments> _importedFragments(BuildStep buildStep) async {
+    final imports = CodegenConfigContext.fragmentImports;
+    if (imports.isEmpty) return _ImportedFragments.none;
+
+    final fragments = <String, FragmentDefinitionNode>{};
+    final libraries = <String, String>{};
+    final declarations = <String, String>{};
+    for (final import in imports) {
+      final docs = [
+        for (final id in await _findPackageAssets(buildStep, import.documents))
+          if (await _parsedAsset(buildStep, id) case final doc?) doc,
+      ];
+      final Map<String, FragmentDefinitionNode> found;
+      try {
+        found = DocumentUtils.collectFragments(docs);
+      } on CodegenException catch (e) {
+        throw _report(e);
+      }
+      if (found.isEmpty) {
+        _warnOnce('fragment_imports: no fragments found in '
+            '${import.documents}');
+      }
+      for (final MapEntry(key: name, value: fragment) in found.entries) {
+        final other = libraries[name];
+        if (other != null && other != import.dart) {
+          throw _report(CodegenException(
+            CodegenErrorCodes.buildDuplicateFragment,
+            'Fragment "$name" is imported from both $other and '
+            '${import.dart} (fragment_imports); rename one of them',
+          ));
+        }
+        fragments[name] = fragment;
+        libraries[name] = import.dart;
+      }
+
+      final names = await _libraryDeclarations(buildStep, import.dart);
+      if (names == null) {
+        _warnOnce('fragment_imports: ${import.dart} not found; generate the '
+            'code of its package first');
+        continue;
+      }
+      for (final name in names) {
+        declarations.putIfAbsent(name, () => import.dart);
+      }
+      for (final name in found.keys) {
+        if (!names.contains('${name.toCamelCase()}FragmentName')) {
+          _warnOnce('fragment_imports: ${import.dart} does not declare '
+              'fragment "$name" (from ${import.documents}); regenerate the '
+              'code of its package');
+        }
+      }
+    }
+    return _ImportedFragments(fragments, libraries, declarations);
+  }
+
+  /// Throws when a fragment of this package ([local]) has the name of an
+  /// imported one: both libraries would declare its interface.
+  void _checkImportedFragmentNames(
+      Map<String, FragmentDefinitionNode> local, _ImportedFragments imported) {
+    for (final name in local.keys) {
+      final library = imported.libraries[name];
+      if (library == null) continue;
+      throw _report(CodegenException(
+        CodegenErrorCodes.buildDuplicateFragment,
+        'Fragment "$name" is defined in this package and imported from '
+        '$library (fragment_imports); rename one of them',
+      ));
+    }
+  }
+
+  /// Throws when [names] (declared by [file]) clash with declarations of
+  /// imported fragment libraries, which index.dart exports too.
+  void _checkImportedDeclarations(String file, Set<String> names) {
+    final clashes = names.where(_importedDeclarations.containsKey).toList()
+      ..sort();
+    if (clashes.isEmpty) return;
+    final name = clashes.first;
+    throw _report(CodegenException(
+      CodegenErrorCodes.buildDuplicateDeclaration,
+      '$file declares "$name", which ${_importedDeclarations[name]} '
+      '(fragment_imports) declares as well; rename the operation or fragment',
+    ));
+  }
+
+  /// Declarations of the imported fragment libraries of the current build
+  /// step: name -> library URI.
+  Map<String, String> _importedDeclarations = const {};
+
+  /// Top-level names declared by the Dart library [uri] (`package:`), or null
+  /// when it can't be read.
+  Future<Set<String>?> _libraryDeclarations(
+      BuildStep buildStep, String uri) async {
+    final id = _packageUriAssetId(uri);
+    if (id == null || !await buildStep.canRead(id)) return null;
+    final text = await buildStep.readAsString(id);
+    final cached = _libraryNames[id];
+    if (cached != null && cached.$1 == text) return cached.$2;
+    final names = topLevelDeclarations(text).toSet();
+    _libraryNames[id] = (text, names);
+    return names;
+  }
+
+  final Map<AssetId, (String, Set<String>)> _libraryNames = {};
+
+  /// The document [id], parsed (and cached while unchanged); null when it
+  /// can't be parsed or defines no fragment.
+  Future<DocumentNode?> _parsedAsset(BuildStep buildStep, AssetId id) async {
+    final text = await buildStep.readAsString(id);
+    if (!text.contains('fragment')) return null;
+    final cached = _parsedDocuments[id];
+    if (cached != null && cached.$1 == text) return cached.$2;
+    DocumentNode? parsed;
+    try {
+      parsed = gql_lang.parseString(text, url: id.uri.toString());
+    } catch (_) {
+      // Reported when the other package builds that document.
+    }
+    _parsedDocuments[id] = (text, parsed);
+    return parsed;
+  }
+
+  /// Assets matching the `package:name/glob` [pattern], sorted. Those of
+  /// another package are listed on disk, see [_importedFragments].
+  Future<List<AssetId>> _findPackageAssets(
+      BuildStep buildStep, String pattern) async {
+    final (package, path) = splitPackageUri(pattern)!;
+    final glob = Glob('lib/$path');
+    final ids = <AssetId>[];
+    if (package == buildStep.inputId.package) {
+      ids.addAll(await buildStep.findAssets(glob).toList());
+    } else {
+      final root = await _packageRoot(package);
+      if (root == null) {
+        throw _report(CodegenException(
+          CodegenErrorCodes.cfgInvalid,
+          'fragment_imports: package "$package" of $pattern is not a '
+          'dependency of this package',
+        ));
+      }
+      if (await Directory(root).exists()) {
+        await for (final entity in glob.list(root: root, followLinks: false)) {
+          if (entity is! File) continue;
+          final relative = p.relative(entity.path, from: root);
+          final id = AssetId(package, p.split(relative).join('/'));
+          if (await buildStep.canRead(id)) ids.add(id);
+        }
+      }
+    }
+    return ids..sort((a, b) => a.path.compareTo(b.path));
+  }
+
+  /// Directory of package [package] (the parent of its `lib/`), or null when
+  /// it is not in the package config.
+  Future<String?> _packageRoot(String package) async {
+    final known = packageRoots[package];
+    if (known != null) return known;
+    return (_packageRootsFromConfig ??= _readPackageConfig())
+        .then((roots) => roots[package]);
+  }
+
+  Future<Map<String, String>>? _packageRootsFromConfig;
+
+  /// Package directories from the `.dart_tool/package_config.json` of the
+  /// package being built (or of the pub workspace it belongs to).
+  static Future<Map<String, String>> _readPackageConfig() async {
+    var dir = Directory.current.absolute;
+    while (true) {
+      final file = File(p.join(dir.path, '.dart_tool', 'package_config.json'));
+      if (await file.exists()) {
+        final json = jsonDecode(await file.readAsString());
+        final roots = <String, String>{};
+        for (final package in (json['packages'] as List).cast<Map>()) {
+          // rootUri is relative to the config file (or absolute).
+          final root = file.uri.resolve(package['rootUri'] as String);
+          roots[package['name'] as String] = p.fromUri(root);
+        }
+        return roots;
+      }
+      final parent = dir.parent;
+      if (parent.path == dir.path) return const {};
+      dir = parent;
+    }
+  }
+
+  /// The asset of a `package:name/path` URI (`lib/path` of package `name`).
+  static AssetId? _packageUriAssetId(String uri) {
+    final parts = splitPackageUri(uri);
+    return parts == null ? null : AssetId(parts.$1, 'lib/${parts.$2}');
+  }
+
+  final Set<String> _warned = {};
+
+  void _warnOnce(String message) {
+    if (_warned.add(message)) log.warning(message);
+  }
+
   String? _fragmentsSignature;
 
   /// Writes fragments.dart for [fragments], or removes it when there are
-  /// none.
-  Future<void> _writeFragmentsFile(_SchemaArtifacts artifacts,
-      Map<String, FragmentDefinitionNode> fragments) async {
+  /// none. Fragments in [libraries] are imported ones: used, not declared.
+  Future<void> _writeFragmentsFile(
+      _SchemaArtifacts artifacts,
+      Map<String, FragmentDefinitionNode> fragments,
+      Map<String, String> libraries) async {
     final names = fragments.keys.toList()..sort();
     final signature = [
       identityHashCode(artifacts),
       for (final name in names) gql_lang.printNode(fragments[name]!),
+      for (final name in names) libraries[name] ?? '',
+      for (final name in _importedDeclarations.keys.toList()..sort()) name,
     ].join('\n');
     final file = File(p.join(config.outputDir, 'fragments.dart'));
     if (signature == _fragmentsSignature &&
@@ -513,12 +774,14 @@ class GraphQLCodegenBuilder implements Builder {
     final String? code;
     try {
       code = ClientExtensionGenerator.generateFragmentsFile(
-          artifacts.schemaDoc, fragments);
+          artifacts.schemaDoc, fragments,
+          fragmentLibraries: libraries);
     } on CodegenException catch (e) {
       throw _report(e);
     }
     _fragmentDeclarations =
         code == null ? const {} : topLevelDeclarations(code).toSet();
+    _checkImportedDeclarations('fragments.dart', _fragmentDeclarations);
     if (code == null) {
       if (await file.exists() &&
           (await file.readAsString())
@@ -727,8 +990,7 @@ class GraphQLCodegenBuilder implements Builder {
 // GraphQL operations index
 
 // Export types
-export 'types.dart';
-${hasFragments ? "export 'fragments.dart';\n" : ''}
+${_sharedLibraryExports()}${hasFragments ? "export 'fragments.dart';\n" : ''}
 // Export all generated operations
 ${exports.join('\n')}
 ${_groupFiles.isEmpty ? '' : '\n// Export operation groups\n${_groupFiles.map((f) => "export '$f';").join('\n')}\n'}
@@ -751,6 +1013,20 @@ $usage''';
           cause: e, stackTrace: st));
     }
   }
+
+  /// Exports of index.dart for types.dart (that of another package with
+  /// `types_import`) and the `fragments.dart` of other packages
+  /// (`fragment_imports`, operation result types only), so importing
+  /// index.dart is enough to use the generated code.
+  static String _sharedLibraryExports() => [
+        for (final library in {
+          CodegenConfigContext.typesImport ?? 'types.dart',
+          if (CodegenConfigContext.operationResultTypes)
+            for (final import in CodegenConfigContext.fragmentImports)
+              import.dart,
+        })
+          "export '$library';\n",
+      ].join();
 
   /// The `package:` URI of `index.dart` in [outputDir], or null when
   /// [outputDir] is not inside `lib/` of [package].
@@ -785,7 +1061,14 @@ $usage''';
   }
 
   /// Writes types.dart when its content changed since the last write.
+  ///
+  /// With `types_import` the types of another package are used instead, and
+  /// a types.dart generated here earlier is removed.
   Future<void> _writeTypesFile(String typesCode) async {
+    if (CodegenConfigContext.typesImport != null) {
+      await _removeGeneratedTypesFile();
+      return;
+    }
     if (typesCode == _lastWrittenTypes) return;
 
     // Create the directory if it does not exist
@@ -798,6 +1081,22 @@ $usage''';
     await _writeIfChanged(typesFile, _format(typesCode, 'types.dart'));
     _lastWrittenTypes = typesCode;
     log.fine('Generated types file: ${typesFile.path}');
+  }
+
+  bool _removedTypesFile = false;
+
+  /// Deletes types.dart in the output directory if this generator wrote it
+  /// (before `types_import` was set).
+  Future<void> _removeGeneratedTypesFile() async {
+    if (_removedTypesFile) return;
+    _removedTypesFile = true;
+    final file = File(p.join(config.outputDir, 'types.dart'));
+    if (await file.exists() &&
+        (await file.readAsString())
+            .contains('Generated by flutter_graphql_codegen')) {
+      await file.delete();
+      log.fine('Removed ${file.path}: types_import is set');
+    }
   }
 
   /// Writes operation file to the configured output directory
