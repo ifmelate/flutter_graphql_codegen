@@ -53,7 +53,7 @@ void main() {
   test('custom scalar wrappers are escaped', () {
     expect(types, contains('class Object_ {'));
     expect(types, contains('class Object_Converter '));
-    expect(types, contains('  @Object_Converter()\n  Object_? obj;'));
+    expect(types, contains('  @_NullableObject_Converter()\n  Object_? obj;'));
     expect(types, contains('  @Object_Converter()\n  List<Object_>'));
   });
 
@@ -75,7 +75,7 @@ type Query { price: Price }
 ''');
     expect(out, contains('class Decimal {'));
     expect(out, contains('  @SafeDecimalConverter()\n  Decimal value;'));
-    expect(out, contains('  @LongConverter()\n  Long? cents;'));
+    expect(out, contains('  @_NullableLongConverter()\n  Long? cents;'));
     expect(out, isNot(contains('Decimal_')));
   });
 

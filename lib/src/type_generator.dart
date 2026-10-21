@@ -830,7 +830,7 @@ class $unknownName implements $name {
       // into a value, so nullable elements get a wrapper that keeps null.
       var elementConverter = mappedConverter;
       if (elementConverter == null) {
-        final converter = _listElementConverter(graphqlBase, baseType);
+        final converter = _scalarConverter(graphqlBase, baseType);
         if (converter != null) {
           elementConverter = fieldType.contains('$baseType?')
               ? _nullableConverter(converter, baseType)
@@ -854,18 +854,16 @@ class $unknownName implements $name {
     }
 
     if (mappedConverter != null) return withName('  @$mappedConverter()');
-    if (baseType == 'DateTime') {
-      // Distinguish between DateTime and LocalDate
-      return withName(getOriginalGraphQLType(type) == 'LocalDate'
-          ? '  @LocalDateConverter()'
-          : '  @DateTimeConverter()');
+    // As with list elements, a nullable field needs the wrapper to keep null
+    // (the plain converter turns it into DateTime.now(), Custom(null), ...).
+    final converter = _scalarConverter(graphqlBase, baseType);
+    if (converter != null) {
+      return withName(isNullable
+          ? '  @${_nullableConverter(converter, baseType)}()'
+          : '  @$converter()');
     }
     if (baseType == 'LocalDate') return withName('  @LocalDateConverter()');
-    if (baseType == 'Decimal') return withName('  @SafeDecimalConverter()');
-    if (baseType == 'Long') return withName('  @LongConverter()');
-    if (baseType == 'Byte') return withName('  @ByteConverter()');
-    if (TypeRegistry.isEnum(graphqlBase) ||
-        TypeRegistry.isWrappedScalar(graphqlBase)) {
+    if (TypeRegistry.isEnum(graphqlBase)) {
       return withName('  @${baseType}Converter()');
     }
     // Safe converters for non-nullable primitives
@@ -881,9 +879,9 @@ class $unknownName implements $name {
     return [if (needsJsonKeyName) nameKey];
   }
 
-  /// Converter for the elements of a list of [baseType], or null when
-  /// json_serializable handles the elements itself.
-  static String? _listElementConverter(String graphqlBase, String baseType) {
+  /// Converter for a [baseType] value or list element, or null when
+  /// json_serializable handles it itself.
+  static String? _scalarConverter(String graphqlBase, String baseType) {
     if (TypeRegistry.isWrappedScalar(graphqlBase)) {
       return '${baseType}Converter';
     }

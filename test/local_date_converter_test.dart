@@ -62,7 +62,7 @@ void main() {
               'dynamic toJson(DateTime object) => object.toIso8601String().split(\'T\').first;'));
 
       // Check that PaymentsInput uses LocalDateConverter for dateFrom and dateTo
-      expect(generatedTypes, contains('@LocalDateConverter()'));
+      expect(generatedTypes, contains('@_NullableLocalDateConverter()'));
 
       // Verify the content contains PaymentsInput class
       expect(generatedTypes, contains('class PaymentsInput'));
@@ -214,9 +214,13 @@ void main() {
 
       // Check that proper converters are applied
       final dateTimeConverterCount =
-          '@DateTimeConverter()'.allMatches(generatedTypes).length;
+          RegExp(r'@(_Nullable)?DateTimeConverter\(\)')
+              .allMatches(generatedTypes)
+              .length;
       final localDateConverterCount =
-          '@LocalDateConverter()'.allMatches(generatedTypes).length;
+          RegExp(r'@(_Nullable)?LocalDateConverter\(\)')
+              .allMatches(generatedTypes)
+              .length;
 
       expect(dateTimeConverterCount, greaterThan(0),
           reason: 'Should have DateTime converters');

@@ -129,7 +129,7 @@ void main() {
 
       // Verify ProfileDTOInput uses DateTimeConverter
       expect(generatedTypes, contains('class ProfileDTOInput'));
-      expect(generatedTypes, contains('@DateTimeConverter()'));
+      expect(generatedTypes, contains('@_NullableDateTimeConverter()'));
 
       // Test problematic dates that caused the original error - now with UTC conversion
       final problematicDate1 =

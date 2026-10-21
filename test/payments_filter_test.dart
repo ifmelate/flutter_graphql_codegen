@@ -48,7 +48,7 @@ void main() {
 
       // Check PaymentsInput class uses LocalDateConverter
       expect(generatedTypes, contains('class PaymentsInput'));
-      expect(generatedTypes, contains('@LocalDateConverter()'));
+      expect(generatedTypes, contains('@_NullableLocalDateConverter()'));
 
       // Specifically check for dateFrom and dateTo fields with LocalDateConverter
       final paymentsInputRegex = RegExp(
@@ -89,8 +89,8 @@ void main() {
       print('dateTo converter: $dateToConverter');
 
       // Both should use LocalDateConverter, not DateTimeConverter
-      expect(dateFromConverter, equals('LocalDateConverter'));
-      expect(dateToConverter, equals('LocalDateConverter'));
+      expect(dateFromConverter, equals('_NullableLocalDateConverter'));
+      expect(dateToConverter, equals('_NullableLocalDateConverter'));
     });
   });
 }

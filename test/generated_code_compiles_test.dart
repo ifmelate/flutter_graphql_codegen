@@ -402,6 +402,10 @@ type Thing {
   dateGrid: [[DateTime!]]
   days: [LocalDate]
   amounts: [Decimal]
+  seen: DateTime
+  day: LocalDate
+  custom: Custom
+  amount: Decimal
 }
 input ThingInput {
   _id: ID!
@@ -416,6 +420,8 @@ type Query {
   thing(input: ThingInput): Thing
   kinds: [Kind!]!
   grid: [[Custom]]
+  lastSeen: DateTime
+  lastCustom: Custom
 }
 ''';
 
@@ -425,9 +431,12 @@ query EdgeCases($_id: ID, $input: ThingInput) {
   Media(_id: $_id) { id title }
   thing(input: $input) {
     _id int String Media { id } customs customGrid dates dateGrid days amounts
+    seen day custom amount
   }
   kinds
   grid
+  lastSeen
+  lastCustom
 }
 ''',
 ];
@@ -455,9 +464,15 @@ void main() {
       'dateGrid': [['2024-01-02T03:04:05Z']],
       'days': ['2024-01-02', null],
       'amounts': ['1.5', null],
+      'seen': null,
+      'day': null,
+      'custom': null,
+      'amount': null,
     },
     'kinds': ['visible', '_hidden'],
     'grid': [['g'], null],
+    'lastSeen': null,
+    'lastCustom': null,
   });
   check(data.Media_!.id == 'm1', 'field named like its type');
   final thing = data.thing!;
@@ -480,6 +495,12 @@ void main() {
   check(data.kinds[1] == Kind.hidden_, 'enum value with underscore');
   check(data.grid![0]![0]!.value == 'g' && data.grid![1] == null,
       'root nested list of custom scalars');
+  check(thing.seen == null, 'null DateTime stays null');
+  check(thing.day == null, 'null LocalDate stays null');
+  check(thing.custom == null, 'null custom scalar stays null');
+  check(thing.amount == null, 'null Decimal stays null');
+  check(data.lastSeen == null, 'null root DateTime stays null');
+  check(data.lastCustom == null, 'null root custom scalar stays null');
 
   final vars = EdgeCasesVariables(
     id_: 'x',
