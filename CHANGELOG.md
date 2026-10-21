@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now get a trailing underscore (`client.query_()`, `client.readQuery_()`)
 - A schema without object or input types produced a `types.dart` with
   `part 'types.g.dart'`, which json_serializable never writes
+- A schema type named `Enum` clashed with the built-in `EnumConverter`; it is
+  now `Enum_`, like other `dart:core` names
 
 ## [2.4.1] - 2026-10-21
 

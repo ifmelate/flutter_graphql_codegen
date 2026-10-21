@@ -317,6 +317,7 @@ type Decimal { amount: String! }
 type User { id: ID! }
 union Set = Map | User
 enum Future { NOW LATER }
+enum Enum { A B }
 input Stream { from: Future }
 type Query {
   maps(filter: Stream): [Map!]!
@@ -324,6 +325,7 @@ type Query {
   set: [Set!]!
   when: Future!
   decimal: Decimal
+  kind: Enum
 }
 type Subscription { ticks: Map! }
 ''';
@@ -336,6 +338,7 @@ query Everything($s: Stream) {
   set { ... on Map { key } ... on User { id } }
   when
   decimal { amount }
+  kind
 }
 subscription Ticks { ticks { key } }
 ''',
@@ -366,6 +369,7 @@ void main() {
     ],
     'when': 'LATER',
     'decimal': {'__typename': 'Decimal', 'amount': '1.5'},
+    'kind': 'B',
   });
   check(data.maps.single.key == 'k', 'Map_ parsed');
   check(data.maps.single.tags[1].raw == 1, 'Object_ list parsed');
@@ -375,6 +379,7 @@ void main() {
   check(data.when == Future_.LATER, 'Future_ enum parsed');
   check(data.decimal!.amount == '1.5', 'Decimal_ object parsed');
   check(Decimal('2.50').value == '2.50', 'built-in Decimal still there');
+  check(data.kind == Enum_.B, 'Enum_ enum parsed');
   check(EverythingVariables(s: Stream_(from: Future_.NOW))
           .toJson()['s']['from'] == 'NOW',
       'Stream_ input serialized');
