@@ -18,28 +18,6 @@ class GraphQLCodeGenerator {
     return TypeGenerator.generateTypesFile(schema);
   }
 
-  /// Generates code for a GraphQL operation.
-  ///
-  /// Same as [generateOperationFile].
-  @Deprecated('Use generateOperationFile; will be removed in 3.0.')
-  static String generateCode(
-    String schema,
-    String documentContent,
-    String operationName,
-    String operationType,
-    String typesContent, {
-    Map<String, FragmentDefinitionNode> fragments = const {},
-  }) {
-    return generateOperationFile(
-      schema,
-      documentContent,
-      operationName,
-      operationType,
-      typesContent,
-      fragments: fragments,
-    );
-  }
-
   /// Generates an operation file.
   ///
   /// [fragments] supplies fragment definitions that live outside
@@ -60,6 +38,16 @@ class GraphQLCodeGenerator {
       OperationAnalyzer.extractDefinedTypes(typesContent),
       fragments: fragments,
     );
+  }
+
+  /// Generates `fragments.dart` (`result_types: operation`): per fragment its
+  /// document, an interface with its fields and a `<Fragment>Data` class.
+  ///
+  /// Returns null when [fragments] is empty.
+  static String? generateFragmentsFile(
+      String schema, Map<String, FragmentDefinitionNode> fragments) {
+    return ClientExtensionGenerator.generateFragmentsFile(
+        gql_lang.parseString(schema), fragments);
   }
 
   /// Extracts defined types from types content

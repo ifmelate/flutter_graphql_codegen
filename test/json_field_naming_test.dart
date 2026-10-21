@@ -1,7 +1,12 @@
+import 'package:flutter_graphql_codegen/src/config_context.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 import 'package:test/test.dart';
 
 void main() {
+  // Covers the json_serializable classes of `result_types: schema`.
+  setUp(() => CodegenConfigContext.resultTypes = 'schema');
+  tearDown(CodegenConfigContext.reset);
+
   group('JSON Field Naming Tests', () {
     test(
         'should preserve camelCase field names using fieldRename: FieldRename.none',

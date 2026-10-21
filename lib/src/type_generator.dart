@@ -7,6 +7,7 @@ import 'code_utils.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
+import 'json_exprs.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
 
@@ -291,6 +292,39 @@ class EnumConverter<T> implements JsonConverter<T, String> {
   String toJson(T object) => object.toString().split('.').last;
 }
 
+/// Deep equality for generated classes: lists and maps are compared by their
+/// elements.
+bool graphqlDeepEquals(Object? a, Object? b) {
+  if (identical(a, b)) return true;
+  if (a is List && b is List) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!graphqlDeepEquals(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (a is Map && b is Map) {
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (!b.containsKey(key) || !graphqlDeepEquals(a[key], b[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return a == b;
+}
+
+/// Hash code matching [graphqlDeepEquals].
+int graphqlDeepHash(Object? value) {
+  if (value is List) return Object.hashAll(value.map(graphqlDeepHash));
+  if (value is Map) {
+    return Object.hashAllUnordered(value.entries
+        .map((e) => Object.hash(graphqlDeepHash(e.key), graphqlDeepHash(e.value))));
+  }
+  return value.hashCode;
+}
+
 $scalarConverters
 
 $enumDefinitions
@@ -567,6 +601,21 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
         def.name.value: def,
     };
 
+    // With operation result types, results are parsed into per-operation
+    // classes; only inputs are needed here, without json_serializable.
+    if (CodegenConfigContext.operationResultTypes) {
+      final inputs = _sortedDefinitions(schemaDoc)
+          .whereType<InputObjectTypeDefinitionNode>()
+          .toList();
+      for (final definition in inputs) {
+        buffer.writeln(_generateInputClass(definition));
+      }
+      if (buffer.toString().contains('_undefined')) {
+        buffer.writeln('const _undefined = Object();');
+      }
+      return buffer.toString();
+    }
+
     for (final definition in _sortedDefinitions(schemaDoc)) {
       if (definition is ObjectTypeDefinitionNode) {
         buffer.writeln(_generateTypeDefinition(definition, schema, interfaces));
@@ -626,6 +675,204 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
       // can tell "clear it" from "leave it".
       includeIfNull: CodegenConfigContext.includeNullInputs,
     );
+  }
+
+  /// Generates a hand-written input class (operation result types): `const`
+  /// constructor, `final` fields, fromJson/toJson, value equality and a typed
+  /// copyWith. Field names, Dart types and constructor defaults match the
+  /// json_serializable classes of schema result types.
+  static String _generateInputClass(InputObjectTypeDefinitionNode node) {
+    final className = SchemaAnalyzer.dartTypeName(node.name.value);
+    final fields = [
+      for (final f in [
+        ...node.fields
+      ]..sort((a, b) => a.name.value.compareTo(b.name.value)))
+        (
+          node: f,
+          key: f.name.value,
+          name: dartFieldName(f.name.value, className: className),
+          type: SchemaAnalyzer.getDartType(f.type),
+        ),
+    ];
+    final names = fields.map((f) => f.name).toSet();
+    String unused(String name) {
+      while (names.contains(name)) {
+        name = '${name}_';
+      }
+      return name;
+    }
+
+    final other = unused('other');
+    final value = unused('value');
+    // A field named `copyWith` would clash with the getter, one named
+    // `identical` would hide the function the copy relies on.
+    final hidesIdentical = names.contains('identical');
+    final withCopy = !names.contains('copyWith') && !hidesIdentical;
+    final copyWith = '${className}_CopyWith';
+
+    final buffer = StringBuffer();
+    buffer.write(_docComment(node.description));
+    buffer.writeln('class $className {');
+    for (final f in fields) {
+      buffer.write(_docComment(f.node.description,
+          directives: f.node.directives, indent: '  '));
+      buffer.write(_deprecation(f.node.directives, indent: '  '));
+      buffer.writeln('  final ${f.type} ${f.name};');
+    }
+    buffer.writeln();
+    buffer.writeln('  const $className({');
+    for (final f in fields) {
+      if (f.type.startsWith('List<')) {
+        buffer.writeln('    this.${f.name} = const [],');
+      } else if (f.type.endsWith('?') || f.type == 'dynamic') {
+        buffer.writeln('    this.${f.name},');
+      } else {
+        buffer.writeln('    required this.${f.name},');
+      }
+    }
+    buffer.writeln('  });');
+    buffer.writeln();
+
+    buffer
+        .writeln('  factory $className.fromJson(Map<String, dynamic> json) =>');
+    buffer.writeln('      $className(');
+    for (final f in fields) {
+      final v = "json['${f.key}']";
+      final type = f.node.type;
+      // Like json_serializable's `defaultValue`, a missing list is empty.
+      final expr = type is ListTypeNode
+          ? '$v == null ? const <${_listElementType(f.type)}>[] : '
+              '${_inputFromJson(type, v, nullable: false)}'
+          : _inputFromJson(type, v, parenthesize: false);
+      buffer.writeln('        ${f.name}: $expr,');
+    }
+    buffer.writeln('      );');
+    buffer.writeln();
+
+    // Null fields are left out unless include_null_inputs is on, so the
+    // server can tell "clear it" from "leave it".
+    final includeNull = CodegenConfigContext.includeNullInputs;
+    buffer.writeln('  Map<String, dynamic> toJson() => {');
+    for (final f in fields) {
+      final type = f.node.type;
+      if (!_inputNullable(type)) {
+        buffer.writeln("        '${f.key}': ${_inputToJson(type, f.name)},");
+        continue;
+      }
+      final conv = _inputToJson(type, value);
+      if (includeNull) {
+        buffer.writeln(conv == value
+            ? "        '${f.key}': ${f.name},"
+            : "        '${f.key}': switch (${f.name}) "
+                '{ final $value? => $conv, null => null },');
+      } else {
+        buffer.writeln(
+            "        if (${f.name} case final $value?) '${f.key}': $conv,");
+      }
+    }
+    buffer.writeln('      };');
+    buffer.writeln();
+
+    if (withCopy) {
+      buffer.writeln('  $copyWith get copyWith => _$copyWith(this);');
+      buffer.writeln();
+    }
+
+    bool isList(String type) => type.startsWith('List<');
+    buffer.writeln('  @override');
+    buffer.writeln('  bool operator ==(Object $other) =>');
+    if (!hidesIdentical) buffer.writeln('      identical(this, $other) ||');
+    buffer.write('      $other is $className');
+    for (final f in fields) {
+      buffer.write(isList(f.type)
+          ? ' &&\n          graphqlDeepEquals(${f.name}, $other.${f.name})'
+          : ' &&\n          ${f.name} == $other.${f.name}');
+    }
+    buffer.writeln(';');
+    buffer.writeln();
+    buffer.writeln('  @override');
+    buffer.writeln('  int get hashCode => Object.hashAll([');
+    for (final f in fields) {
+      buffer.writeln(isList(f.type)
+          ? '        graphqlDeepHash(${f.name}),'
+          : '        ${f.name},');
+    }
+    buffer.writeln('      ]);');
+    buffer.writeln('}');
+    buffer.writeln();
+
+    if (withCopy) {
+      String param(String type) => JsonExprs.withNullability(
+          type.endsWith('?') ? type.substring(0, type.length - 1) : type, true);
+      buffer.writeln('/// Copies a [$className], changing the given fields '
+          '(`null` included).');
+      buffer.writeln('abstract class $copyWith {');
+      buffer.writeln('  $className call({');
+      for (final f in fields) {
+        buffer.writeln('    ${param(f.type)} ${f.name},');
+      }
+      buffer.writeln('  });');
+      buffer.writeln('}');
+      buffer.writeln();
+      buffer.writeln('class _$copyWith implements $copyWith {');
+      buffer.writeln('  const _$copyWith(this._value);');
+      buffer.writeln();
+      buffer.writeln('  final $className _value;');
+      buffer.writeln();
+      buffer.writeln('  @override');
+      buffer.writeln('  $className call({');
+      for (final f in fields) {
+        buffer.writeln('    Object? ${f.name} = _undefined,');
+      }
+      buffer.writeln('  }) =>');
+      buffer.writeln('      $className(');
+      for (final f in fields) {
+        final cast = f.type == 'dynamic' ? '' : ' as ${f.type}';
+        buffer.writeln('        ${f.name}: identical(${f.name}, _undefined) '
+            '? _value.${f.name} : ${f.name}$cast,');
+      }
+      buffer.writeln('      );');
+      buffer.writeln('}');
+      buffer.writeln();
+    }
+    return buffer.toString();
+  }
+
+  /// Whether the Dart type of input [type] is nullable; in legacy mode lists
+  /// always are (see [SchemaAnalyzer.getDartType]).
+  static bool _inputNullable(TypeNode type) =>
+      !type.isNonNull ||
+      (type is ListTypeNode && !CodegenConfigContext.strictNullability);
+
+  /// `T` of a Dart `List<T>` / `List<T>?` type.
+  static String _listElementType(String listType) =>
+      listType.substring(5, listType.length - (listType.endsWith('?') ? 2 : 1));
+
+  /// Expression converting the JSON value [v] into the Dart value of input
+  /// [type]; [nullable] defaults to the nullability of the Dart type.
+  static String _inputFromJson(TypeNode type, String v,
+      {bool? nullable, bool parenthesize = true}) {
+    final String inner;
+    if (type is ListTypeNode) {
+      final item = _inputFromJson(type.type, 'e');
+      inner = '($v as List<dynamic>).map((e) => $item).toList()';
+    } else {
+      inner = JsonExprs.namedFromJson(
+          (type as NamedTypeNode).name.value, v, TypeRegistry.inputTypes);
+    }
+    if (!(nullable ?? _inputNullable(type))) return inner;
+    final check = '$v == null ? null : $inner';
+    return parenthesize ? '($check)' : check;
+  }
+
+  /// Expression serialising the non-null value [v] of input [type].
+  static String _inputToJson(TypeNode type, String v) {
+    if (type is! ListTypeNode) return JsonExprs.toJsonExpr(type, v);
+    final item = _inputToJson(type.type, 'e');
+    if (item == 'e') return v;
+    final itemExpr =
+        _inputNullable(type.type) ? '(e == null ? null : $item)' : item;
+    return '$v.map((e) => $itemExpr).toList()';
   }
 
   /// Generates an abstract class for a GraphQL interface plus an `Unknown*`
@@ -1039,164 +1286,6 @@ class $name implements JsonConverter<$type?, dynamic> {
     return fieldName.contains(RegExp(r'[A-Z]')) || fieldName.length > 1;
   }
 
-  /// Generates a class for an object type (legacy method, kept for compatibility)
-  @Deprecated('Not used by the generator; will be removed in 3.0.')
-  static String generateClassForType(ObjectTypeDefinitionNode type) {
-    final className = type.name.value;
-    final fields = type.fields;
-
-    final classBuffer = StringBuffer();
-    classBuffer.writeln('@JsonSerializable()');
-    classBuffer.writeln('class $className {');
-
-    for (final field in fields) {
-      final fieldName = field.name.value;
-      var fieldType = SchemaAnalyzer.getDartType(field.type);
-      final baseType = fieldType
-          .replaceAll('?', '')
-          .replaceAll('List<', '')
-          .replaceAll('>', '');
-
-      // Check if this is a list field
-      final isListField = fieldType.startsWith('List<');
-
-      if (isListField) {
-        // Check if the list contains custom types that need converters
-        final innerType = fieldType.substring(
-            5, fieldType.length - (fieldType.endsWith('>?') ? 2 : 1));
-        final cleanInnerType = innerType.replaceAll('?', '');
-
-        // Add converter annotation for custom scalar types in lists
-        if (TypeRegistry.isCustomScalar(cleanInnerType) &&
-            cleanInnerType != 'Decimal' &&
-            cleanInnerType != 'Short' &&
-            cleanInnerType != 'Byte') {
-          // For lists of custom scalars, use JsonKey with converter
-          classBuffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _${cleanInnerType.toLowerCase()}ListFromJson, toJson: _${cleanInnerType.toLowerCase()}ListToJson)');
-        } else if (cleanInnerType == 'DateTime') {
-          // Get original GraphQL type for list element to distinguish between DateTime and LocalDate
-          final originalListType = getOriginalGraphQLType(field.type);
-          if (originalListType == 'LocalDate') {
-            classBuffer.writeln(
-                '  @JsonKey(defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
-          } else {
-            classBuffer.writeln(
-                '  @JsonKey(defaultValue: [], fromJson: _dateTimeListFromJson, toJson: _dateTimeListToJson)');
-          }
-        } else if (cleanInnerType == 'LocalDate') {
-          classBuffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _localDateListFromJson, toJson: _localDateListToJson)');
-        } else if (cleanInnerType == 'Decimal') {
-          classBuffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _decimalListFromJson, toJson: _decimalListToJson)');
-        } else if (cleanInnerType == 'Byte') {
-          classBuffer.writeln(
-              '  @JsonKey(defaultValue: [], fromJson: _byteListFromJson, toJson: _byteListToJson)');
-        } else if (TypeRegistry.isEnum(cleanInnerType)) {
-          classBuffer.writeln('  @JsonKey(defaultValue: [])');
-        } else {
-          // For regular lists (including object lists), just use default value
-          classBuffer.writeln('  @JsonKey(defaultValue: [])');
-        }
-      } else if (baseType == 'DateTime') {
-        // Get original GraphQL type to distinguish between DateTime and LocalDate
-        final originalType = getOriginalGraphQLType(field.type);
-        if (originalType == 'LocalDate') {
-          classBuffer.writeln('  @LocalDateConverter()');
-        } else {
-          classBuffer.writeln('  @DateTimeConverter()');
-        }
-      } else if (baseType == 'Decimal') {
-        classBuffer.writeln('  @SafeDecimalConverter()');
-      } else if (baseType == 'Long') {
-        classBuffer.writeln('  @LongConverter()');
-      } else if (baseType == 'Byte') {
-        classBuffer.writeln('  @ByteConverter()');
-      } else if (TypeRegistry.isEnum(baseType)) {
-        classBuffer.writeln('  @${baseType}Converter()');
-      } else if (!GraphQLConstants.builtInScalars.contains(baseType) &&
-          !GraphQLConstants.scalarToDartType.containsKey(baseType) &&
-          TypeRegistry.isCustomScalar(baseType) &&
-          baseType != 'Decimal' &&
-          baseType != 'Long' &&
-          baseType != 'Short' &&
-          baseType != 'Byte') {
-        classBuffer.writeln('  @${baseType}Converter()');
-      }
-
-      classBuffer.writeln('  final $fieldType ${fieldName.toCamelCase()};');
-    }
-
-    classBuffer.writeln();
-    classBuffer.writeln('  $className({');
-    for (final field in fields) {
-      final fieldName = field.name.value;
-      var fieldType = SchemaAnalyzer.getDartType(field.type);
-
-      final isNullable = fieldType.endsWith('?');
-      final isListField = fieldType.startsWith('List<');
-
-      // Special handling for boolean fields that we made nullable for safety
-      final isBooleanMadeNullable = fieldType == 'bool' && !isNullable;
-      // Special handling for numeric fields that we made nullable for safety
-      final isNumericMadeNullable =
-          (fieldType == 'int' || fieldType == 'double') && !isNullable;
-
-      // Lists are now always nullable, so they don't need 'required'
-      // Other nullable fields also don't need 'required'
-      if (isListField) {
-        // For list fields, provide empty list as default
-        classBuffer.writeln('    this.$fieldName = const [],');
-      } else if (isBooleanMadeNullable) {
-        // Boolean fields made nullable for safety don't need 'required'
-        classBuffer.writeln('    this.$fieldName,');
-      } else if (isNumericMadeNullable) {
-        // Numeric fields made nullable for safety don't need 'required'
-        classBuffer.writeln('    this.$fieldName,');
-      } else if (isNullable) {
-        classBuffer.writeln('    this.$fieldName,');
-      } else {
-        classBuffer.writeln('    required this.$fieldName,');
-      }
-    }
-    classBuffer.writeln('  });');
-
-    classBuffer.writeln();
-    classBuffer.writeln(
-        '  factory $className.fromJson(Map<String, dynamic> json) => _\$${className}FromJson(json);');
-    classBuffer.writeln(
-        '  Map<String, dynamic> toJson() => _\$${className}ToJson(this);');
-
-    classBuffer.writeln('}');
-
-    return classBuffer.toString();
-  }
-
-  /// Generates type definitions for older API compatibility
-  @Deprecated('Not used by the generator; will be removed in 3.0.')
-  static String generateTypeDefinitions(DocumentNode schemaDoc) {
-    final buffer = StringBuffer();
-
-    // Sort deterministically
-    final defs = List<DefinitionNode>.from(schemaDoc.definitions);
-    defs.sort((a, b) {
-      final an = (a is TypeDefinitionNode) ? a.name.value : '';
-      final bn = (b is TypeDefinitionNode) ? b.name.value : '';
-      return an.compareTo(bn);
-    });
-
-    for (final definition in defs) {
-      if (definition is ObjectTypeDefinitionNode) {
-        buffer.writeln(generateClassForType(definition));
-      }
-    }
-
-    return buffer.toString();
-  }
-
-  // Method removed - was unused
-
   /// Gets the original GraphQL type name from a TypeNode without mapping
   static String getOriginalGraphQLType(TypeNode type) {
     if (type is NamedTypeNode) {
@@ -1205,55 +1294,5 @@ class $name implements JsonConverter<$type?, dynamic> {
       return getOriginalGraphQLType(type.type);
     }
     return 'dynamic';
-  }
-
-  /// Gets the Dart type from a TypeNode but preserves original type name for converter logic
-  @Deprecated('Not used by the generator; will be removed in 3.0.')
-  static String getDartTypeFromOriginal(
-      String originalType, bool isNullable, bool isList) {
-    String dartType;
-
-    switch (originalType) {
-      case 'Int':
-        dartType = 'int';
-        break;
-      case 'Float':
-        dartType = 'double';
-        break;
-      case 'String':
-        dartType = 'String';
-        break;
-      case 'Boolean':
-        dartType = 'bool';
-        break;
-      case 'ID':
-        dartType = 'String';
-        break;
-      case 'Short':
-        dartType = 'int';
-        break;
-      case 'DateTime':
-      case 'LocalDate':
-        dartType = 'DateTime';
-        break;
-      case 'Decimal':
-        dartType = 'Decimal';
-        break;
-      case 'Long':
-        dartType = 'Long';
-        break;
-      case 'Byte':
-        dartType = 'Byte';
-        break;
-      default:
-        dartType = originalType;
-        break;
-    }
-
-    if (isList) {
-      return isNullable ? 'List<$dartType>?' : 'List<$dartType>';
-    }
-
-    return isNullable ? '$dartType?' : dartType;
   }
 }

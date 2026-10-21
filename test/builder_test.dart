@@ -42,12 +42,13 @@ void main() {
       );
 
   Future<void> run(Map<String, String> assets,
-      {List<String> warnings = const []}) async {
+      {List<String> warnings = const [], Set<String>? generateFor}) async {
     try {
       await testBuilder(
         builder(warnings: warnings),
         {'a|lib/schema.graphql': _schema, ...assets},
         rootPackage: 'a',
+        generateFor: generateFor,
         onLog: (r) => logs.add('${r.level.name}: ${r.message}'),
       );
     } on CodegenException {
@@ -63,6 +64,7 @@ void main() {
 
   test('generates every operation of a document, using external fragments',
       () async {
+    CodegenConfigContext.resultTypes = 'schema';
     await run({
       'a|lib/graphql/fragments.graphql':
           'fragment UserBits on User { id name }',
@@ -90,6 +92,20 @@ query GetVersion { version }
     expect(index, contains("export 'rename_graphql.g.dart';"));
   });
 
+  test('operation result types: types.dart keeps inputs, no result classes',
+      () async {
+    await run({
+      'a|lib/schema.graphql': '$_schema\ninput UserFilter { name: String }',
+      'a|lib/graphql/a.graphql': 'query GetVersion { version }',
+    });
+    expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    final types = output('types.dart')!;
+    expect(types, isNot(contains('class User ')));
+    expect(types, contains('class UserFilter {'));
+    expect(types, isNot(contains('@JsonSerializable')));
+    expect(types, isNot(contains('types.g.dart')));
+  });
+
   test('writes dart-formatted files', () async {
     await run({
       'a|lib/graphql/a.graphql': r'''
@@ -109,11 +125,65 @@ query GetUser($id: ID!) { user(id: $id) { id name } }
   });
 
   test('skips schema and fragment-only documents', () async {
+    CodegenConfigContext.resultTypes = 'schema';
     await run({
       'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
     });
     expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
     expect(output('types.dart'), isNull);
+    expect(output('fragments.dart'), isNull);
+  });
+
+  test('schema result types write no fragments.dart', () async {
+    CodegenConfigContext.resultTypes = 'schema';
+    await run({
+      'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
+      'a|lib/graphql/a.graphql':
+          r'query GetUser($id: ID!) { user(id: $id) { ...UserBits } }',
+    });
+    expect(output('get_user_graphql.g.dart'), isNot(contains('fragments')));
+    expect(output('fragments.dart'), isNull);
+    expect(output('index.dart'), isNot(contains('fragments.dart')));
+  });
+
+  test('fragment-only documents write fragments.dart', () async {
+    await run({
+      'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
+    });
+    expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    final fragments = output('fragments.dart')!;
+    expect(fragments, contains('abstract interface class UserBits {'));
+    expect(fragments, contains('class UserBitsData implements UserBits {'));
+    expect(fragments, contains('final userBitsFragment = graphql.gql('));
+    expect(output('index.dart'), contains("export 'fragments.dart';"));
+  });
+
+  test('fragments.dart follows fragment changes, operations import it',
+      () async {
+    const operation =
+        r'query GetUser($id: ID!) { user(id: $id) { ...UserBits } }';
+    const other = 'query GetVersion { version }';
+    await run({
+      'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
+      'a|lib/graphql/a.graphql': operation,
+      'a|lib/graphql/b.graphql': other,
+    });
+    expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    final getUser = output('get_user_graphql.g.dart')!;
+    expect(getUser, contains("import 'fragments.dart';"));
+    expect(getUser, contains('class GetUser_User implements UserBits {'));
+    expect(output('get_version_graphql.g.dart'),
+        isNot(contains("import 'fragments.dart';")));
+    expect(output('index.dart'), contains("export 'fragments.dart';"));
+
+    await run({
+      'a|lib/graphql/fragments.graphql':
+          'fragment UserBits on User { id name }',
+      'a|lib/graphql/a.graphql': operation,
+      'a|lib/graphql/b.graphql': other,
+    });
+    expect(output('fragments.dart'), contains('String? get name;'));
+    expect(output('get_user_graphql.g.dart'), contains('final String? name;'));
   });
 
   test('warns about anonymous operations', () async {
@@ -210,6 +280,97 @@ query GetUser($id: ID!) { user(id: $id) { id name } }
         'a|lib/graphql/b.graphql': 'query GetVersion { version }',
       });
       expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    });
+  });
+
+  group('names declared by two files', () {
+    const schema = '''
+type User { id: ID! }
+type Thing { c: User }
+type Query { b: Thing c: User version: String }
+''';
+    // Operation A_B field c and operation A path b.c are both A_B_C.
+    const ab = 'query A_B { c { id } }';
+    const a = 'query A { b { c { id } } }';
+    bool severe(String l) => l.startsWith('SEVERE');
+
+    test('in two documents are reported with both operations', () async {
+      await run({
+        'a|lib/schema.graphql': schema,
+        'a|lib/graphql/a.graphql': a,
+        'a|lib/graphql/b.graphql': ab,
+      });
+      expect(
+          logs,
+          contains(allOf(
+            contains('BLD108'),
+            contains('"A"'),
+            contains('"A_B"'),
+            contains('"A_B_C"'),
+            contains('lib/graphql/a.graphql'),
+            contains('lib/graphql/b.graphql'),
+          )));
+    });
+
+    test('in one document are reported', () async {
+      await run({
+        'a|lib/schema.graphql': schema,
+        'a|lib/graphql/a.graphql': '$a\n$ab',
+      });
+      expect(
+          logs,
+          contains(allOf(
+              contains('BLD108'), contains('"A_B_C"'), contains('"A_B"'))));
+    });
+
+    test('are found in files of an earlier build', () async {
+      await run({'a|lib/schema.graphql': schema, 'a|lib/graphql/a.graphql': a});
+      expect(logs.where(severe), isEmpty);
+      // A new builder, as in the next `build_runner build`, that only
+      // builds b.graphql: A's file is only on disk.
+      await run({
+        'a|lib/schema.graphql': schema,
+        'a|lib/graphql/a.graphql': a,
+        'a|lib/graphql/b.graphql': ab,
+      }, generateFor: {
+        'a|lib/graphql/b.graphql'
+      });
+      expect(logs, contains(allOf(contains('BLD108'), contains('"A_B_C"'))));
+    });
+
+    test('of an operation no longer defined are not reported', () async {
+      await run({'a|lib/schema.graphql': schema, 'a|lib/graphql/a.graphql': a});
+      // A's file stays on disk (a.graphql is not rebuilt here), but A is
+      // gone from a.graphql.
+      await run({
+        'a|lib/schema.graphql': schema,
+        'a|lib/graphql/a.graphql': 'query Other { version }',
+        'a|lib/graphql/b.graphql': ab,
+      }, generateFor: {
+        'a|lib/graphql/b.graphql'
+      });
+      expect(logs.where(severe), isEmpty);
+      final generated = outDir
+          .listSync()
+          .whereType<File>()
+          .map((f) => f.readAsStringSync())
+          .where((code) => code.contains('// Operation: A_B (query)'));
+      expect(generated.single, contains('class A_B_C {'));
+    });
+
+    test('by an operation and fragments.dart are reported', () async {
+      await run({
+        'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
+        'a|lib/graphql/a.graphql': 'query UserBitsFragment { version }',
+      });
+      expect(
+          logs,
+          contains(allOf(
+            contains('BLD108'),
+            contains('"UserBitsFragment"'),
+            contains('"UserBitsFragmentExtension"'),
+            contains('fragments.dart'),
+          )));
     });
   });
 }

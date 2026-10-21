@@ -23,6 +23,10 @@ class CodegenErrorCodes {
   static const String buildInvalidArgument = 'BLD105';
   static const String buildInvalidVariable = 'BLD106';
   static const String buildInvalidSelection = 'BLD107';
+
+  /// Two generated files declare the same top-level name (index.dart could
+  /// not export both).
+  static const String buildDuplicateDeclaration = 'BLD108';
   static const String buildIndexFailed = 'BLD200';
 }
 

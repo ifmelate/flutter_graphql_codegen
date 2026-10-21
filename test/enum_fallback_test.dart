@@ -52,7 +52,10 @@ document_paths: [a.graphql]
     });
 
     test(r'enum lists fall back to $unknown', () {
-      expect(types, contains(r'unknownEnumValue: Role.$unknown'));
+      // json_serializable decodes the enum lists of `result_types: schema`.
+      CodegenConfigContext.resultTypes = 'schema';
+      expect(TypeGenerator.generateTypesFile(_schema),
+          contains(r'unknownEnumValue: Role.$unknown'));
     });
   });
 }

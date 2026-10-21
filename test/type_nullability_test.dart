@@ -13,6 +13,8 @@ void main() {
       TypeRegistry.clear();
       // These tests verify strict nullability behavior
       CodegenConfigContext.strictNullability = true;
+      // Covers the json_serializable classes of `result_types: schema`.
+      CodegenConfigContext.resultTypes = 'schema';
     });
 
     tearDown(() {

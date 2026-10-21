@@ -47,6 +47,8 @@ void main() {
 
   setUpAll(() {
     CodegenConfigContext.reset();
+    // Covers the json_serializable classes of `result_types: schema`.
+    CodegenConfigContext.resultTypes = 'schema';
     types = TypeGenerator.generateTypesFile(_schema);
   });
 
@@ -92,7 +94,10 @@ type Query { "Old field." a: String @deprecated(reason: "Gone") }
   });
 
   group('with deprecated_annotations', () {
-    setUp(() => CodegenConfigContext.deprecatedAnnotations = true);
+    setUp(() {
+      CodegenConfigContext.resultTypes = 'schema';
+      CodegenConfigContext.deprecatedAnnotations = true;
+    });
     tearDown(CodegenConfigContext.reset);
 
     test('@deprecated becomes @Deprecated with the reason', () {

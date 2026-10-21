@@ -5,10 +5,13 @@ import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 import 'code_utils.dart';
 import 'config_context.dart';
+import 'declarations.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
 import 'document_validator.dart';
+import 'json_exprs.dart';
 import 'naming.dart';
+import 'operation_types.dart';
 import 'schema_analyzer.dart';
 import 'type_generator.dart';
 
@@ -31,23 +34,183 @@ class ClientExtensionGenerator {
     final operation = _findOperation(
         gql_lang.parseString(operationDocumentContent), operationName);
     final scalarImports = TypeGenerator.scalarImportDirectives();
-    final body = generateClientExtension(
+    final (body, usesFragments) = _generate(
       operationName,
-      operationType,
       operationDocumentContent,
       schemaDoc,
       definedTypes,
       fragments: fragments,
     );
+    final ignores = CodegenConfigContext.operationResultTypes
+        ? 'unused_import, deprecated_member_use_from_same_package'
+        : 'unused_import';
     return '''${CodeGenerationConstants.generatedFileWarning}
 // Operation: $operationName (${operation.type.name})
-${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, unused_import
+${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, $ignores
 
 import 'package:graphql/client.dart' as graphql;
 import 'package:normalize/utils.dart' as normalize;
-import 'types.dart';
+${usesFragments ? "import 'fragments.dart';\n" : ''}import 'types.dart';
 $scalarImports
 $body''';
+  }
+
+  /// Generates `fragments.dart`: for every fragment its document, an
+  /// interface with its fields (implemented by the operation classes that
+  /// spread it), a data class and `read<Fragment>Fragment` /
+  /// `write<Fragment>Fragment` cache methods. Fragments on introspection
+  /// types are left out. Returns null when no fragment is left.
+  static String? generateFragmentsFile(
+    DocumentNode schemaDoc,
+    Map<String, FragmentDefinitionNode> fragments,
+  ) {
+    if (fragments.isEmpty) return null;
+    final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
+    SchemaAnalyzer.extractCustomTypesAndEnums(schema);
+    final types = OperationTypes(schema, fragments);
+    if (types.fragmentNames.isEmpty) return null;
+    types.checkFragments();
+
+    final buffer = StringBuffer()
+      ..writeln(CodeGenerationConstants.generatedFileWarning)
+      ..writeln('// Fragments of all documents')
+      ..writeln('${CodeGenerationConstants.ignoreForFile}, unused_import, '
+          'deprecated_member_use_from_same_package')
+      ..writeln()
+      ..writeln("import 'package:graphql/client.dart' as graphql;")
+      ..writeln("import 'types.dart';")
+      ..write(TypeGenerator.scalarImportDirectives())
+      ..writeln();
+    for (final name in types.fragmentNames) {
+      final camel = name.toCamelCase();
+      final document = gql_lang
+          .printNode(DocumentUtils.buildFragmentDocument(name, fragments));
+      buffer
+        ..writeln('/// GraphQL document of the `$name` fragment (with the '
+            'fragments it uses).')
+        ..writeln('final ${camel}Fragment = graphql.gql('
+            '${_dartStringLiteral(document)});')
+        ..writeln()
+        ..writeln("const String ${camel}FragmentName = '$name';")
+        ..writeln()
+        ..write(types.fragmentInterfaces(name))
+        ..write(types.fragmentData(name))
+        ..write(_fragmentCacheExtension(types, name));
+    }
+    buffer.write(types.support);
+    final code = buffer.toString();
+
+    // Classes are checked by checkFragments; this catches constants and
+    // extensions, e.g. of names differing only in the case of the first
+    // letter (`userBits` and `UserBits` both declare `userBitsFragment`).
+    final seen = <String>{};
+    for (final name in topLevelDeclarations(code)) {
+      if (!seen.add(name)) {
+        throw CodegenException(
+          CodegenErrorCodes.buildDuplicateFragment,
+          'fragments.dart would declare "$name" twice, for two fragments '
+          'with similar names; rename one of them',
+        );
+      }
+    }
+    return code;
+  }
+
+  /// `read<Fragment>Fragment` / `write<Fragment>Fragment` on
+  /// `GraphQLClient` for fragment [name].
+  ///
+  /// `normalize` identifies the object from `idFields` plus a `__typename`
+  /// that defaults to the fragment's type condition. That default is right
+  /// for a fragment on an object type, but names no cached object for one
+  /// on an interface or union, so there `__typename` must be given (read)
+  /// or is taken from the data (write).
+  static String _fragmentCacheExtension(OperationTypes types, String name) {
+    final camel = name.toCamelCase();
+    final pascal = name.capitalize();
+    final type = types.fragmentType(name);
+    final abstract = TypeRegistry.isAbstract(type);
+    final data = types.fragmentDataClass(name);
+    final iface = types.fragmentInterfaceName(name);
+    final read = _extensionMember('read${pascal}Fragment');
+    final write = _extensionMember('write${pascal}Fragment');
+
+    String request(String idFields) => '''
+      graphql.FragmentRequest(
+        fragment: graphql.Fragment(
+          document: ${camel}Fragment,
+          fragmentName: ${camel}FragmentName,
+        ),
+        idFields: $idFields,
+        variables: variables ?? const {},
+      )''';
+
+    final String readIdFields;
+    final String readCheck;
+    final String writeIdFields;
+    final String idDoc;
+    final String writeIdDoc;
+    if (abstract) {
+      readIdFields = 'idFields';
+      readCheck = '''
+    if (!idFields.containsKey('__typename')) {
+      throw ArgumentError.value(idFields, 'idFields',
+          'needs "__typename": $name is on the abstract type $type');
+    }
+''';
+      writeIdFields = "{'__typename': data.typename, ...idFields}";
+      idDoc = '''
+  /// [idFields] identify the object (usually `id`) and must include its
+  /// `__typename`, since `$type` is abstract.''';
+      writeIdDoc = '''
+  /// [idFields] identify the object (usually `id`); `__typename` defaults to
+  /// `data.typename`.''';
+    } else {
+      readIdFields = writeIdFields = "{'__typename': '$type', ...idFields}";
+      readCheck = '';
+      idDoc = writeIdDoc = '''
+  /// [idFields] identify the object (usually `{'id': ...}`); `__typename`
+  /// defaults to `$type`.''';
+    }
+
+    return '''
+/// Cache access for the `$name` fragment.
+extension ${pascal}FragmentExtension on graphql.GraphQLClient {
+  /// Reads the `$name` fragment of an object from the cache; null when it
+  /// isn't cached (or only partly).
+  ///
+$idDoc
+  $data? $read(
+    Map<String, dynamic> idFields, {
+    Map<String, dynamic>? variables,
+    bool optimistic = true,
+  }) {
+$readCheck    final Map<String, dynamic>? json = this.readFragment(
+${request(readIdFields)},
+      optimistic: optimistic,
+    );
+    return json == null ? null : $data.fromJson(json);
+  }
+
+  /// Writes [data] as the `$name` fragment of an object into the cache.
+  /// Any object implementing [$iface] can be written, such as one returned
+  /// by an operation that spreads the fragment.
+  ///
+$writeIdDoc
+  void $write(
+    Map<String, dynamic> idFields,
+    $iface data, {
+    Map<String, dynamic>? variables,
+    bool broadcast = true,
+  }) {
+    this.writeFragment(
+${request(writeIdFields)},
+      data: data.toJson(),
+      broadcast: broadcast,
+    );
+  }
+}
+
+''';
   }
 
   /// Generates the client code for a GraphQL operation: the document constant,
@@ -60,6 +223,22 @@ $body''';
   static String generateClientExtension(
     String operationName,
     String operationType,
+    String operationDocumentContent,
+    DocumentNode schemaDoc,
+    Set<String> definedTypes, {
+    Map<String, FragmentDefinitionNode> fragments = const {},
+  }) =>
+      _generate(
+        operationName,
+        operationDocumentContent,
+        schemaDoc,
+        definedTypes,
+        fragments: fragments,
+      ).$1;
+
+  /// [generateClientExtension] plus whether the code uses `fragments.dart`.
+  static (String, bool) _generate(
+    String operationName,
     String operationDocumentContent,
     DocumentNode schemaDoc,
     Set<String> definedTypes, {
@@ -84,6 +263,7 @@ $body''';
       schema: schema,
       definedTypes: definedTypes,
       strict: CodegenConfigContext.strictNullability,
+      fragments: allFragments,
     );
 
     final document = gql_lang.printNode(
@@ -102,10 +282,13 @@ $body''';
     final variables = _generateVariablesClass(context);
     if (variables.isNotEmpty) buffer.writeln(variables);
 
-    buffer.writeln(_generateParser(context));
+    final classes = context.classes;
+    buffer.writeln(classes == null
+        ? _generateParser(context)
+        : _generateTypedParser(context, classes));
     buffer.writeln(_generateOptions(context));
     buffer.write(_generateExtension(context));
-    return buffer.toString();
+    return (buffer.toString(), classes?.usesFragments ?? false);
   }
 
   static OperationDefinitionNode _findOperation(
@@ -163,7 +346,7 @@ $body''';
       ..writeln();
 
     for (final f in fields) {
-      final type = _inputDartType(f.type, forceNullable: f.optional);
+      final type = JsonExprs.inputDartType(f.type, forceNullable: f.optional);
       buffer.writeln('  final $type ${f.dartName};');
     }
 
@@ -172,7 +355,7 @@ $body''';
       ..writeln('  Map<String, dynamic> toJson() => <String, dynamic>{');
     for (final f in fields) {
       if (f.optional) {
-        var expr = _toJsonExpr(f.type, '${f.dartName}!');
+        var expr = JsonExprs.toJsonExpr(f.type, '${f.dartName}!');
         if (expr == '${f.dartName}!') expr = f.dartName;
         if (CodegenConfigContext.includeNullInputs && !f.hasDefault) {
           final value = expr == f.dartName
@@ -185,68 +368,13 @@ $body''';
         }
       } else {
         buffer.writeln("        '${f.graphqlName}': "
-            "${_toJsonExpr(f.type, f.dartName)},");
+            "${JsonExprs.toJsonExpr(f.type, f.dartName)},");
       }
     }
     buffer
       ..writeln('      };')
       ..writeln('}');
     return buffer.toString();
-  }
-
-  /// Dart type of an input value, respecting the schema's nullability.
-  static String _inputDartType(TypeNode type, {bool forceNullable = false}) {
-    final nullable = forceNullable || !type.isNonNull;
-    final base = type is ListTypeNode
-        ? 'List<${_inputDartType(type.type)}>'
-        : _namedDartType((type as NamedTypeNode).name.value);
-    return _nullable(base, nullable);
-  }
-
-  /// Expression serialising the non-null value [v] of GraphQL [type].
-  static String _toJsonExpr(TypeNode type, String v) {
-    if (type is ListTypeNode) {
-      final inner = type.type;
-      final item = _toJsonExpr(inner, 'e');
-      if (item == 'e') return v;
-      final itemExpr = inner.isNonNull ? item : '(e == null ? null : $item)';
-      return '$v.map((e) => $itemExpr).toList()';
-    }
-
-    final name = (type as NamedTypeNode).name.value;
-    final mapped = CodegenConfigContext.scalarMapping[name];
-    if (mapped != null) {
-      final converter = CodegenConfigContext.scalarConverters[name];
-      if (converter != null) return 'const $converter().toJson($v)';
-      if (mapped == 'DateTime') return 'const DateTimeConverter().toJson($v)';
-      return _isJsonNative(mapped) ? v : '$v.toJson()';
-    }
-    // A schema type named like a built-in scalar (e.g. `type Decimal`) is
-    // handled as the type the generator declares for it.
-    switch (TypeRegistry.declaresType(name) ? '' : name) {
-      case 'Int':
-      case 'Float':
-      case 'String':
-      case 'Boolean':
-      case 'ID':
-      case 'Short':
-        return v;
-      case 'DateTime':
-        return 'const DateTimeConverter().toJson($v)';
-      case 'LocalDate':
-        return 'const LocalDateConverter().toJson($v)';
-      case 'Decimal':
-        return 'const SafeDecimalConverter().toJson($v)';
-      case 'Long':
-        return 'const LongConverter().toJson($v)';
-      case 'Byte':
-        return 'const ByteConverter().toJson($v)';
-    }
-    if (TypeRegistry.isEnum(name) || TypeRegistry.isCustomScalar(name)) {
-      return 'const ${SchemaAnalyzer.dartTypeName(name)}Converter().toJson($v)';
-    }
-    if (TypeRegistry.inputTypes.contains(name)) return '$v.toJson()';
-    return v;
   }
 
   // ---------------------------------------------------------------------------
@@ -291,6 +419,28 @@ $body''';
         ..writeln()
         ..write(_generateResultClass(ctx));
     }
+    return buffer.toString();
+  }
+
+  /// `parse*Data` and the result classes (`result_types: operation`).
+  static String _generateTypedParser(
+      _OperationContext ctx, OperationClasses classes) {
+    final returnType = classes.returnType;
+    final noData = returnType.endsWith('?')
+        ? 'return null;'
+        : "throw StateError('${ctx.name}: response contains no data');";
+    final buffer = StringBuffer()
+      ..writeln('/// Converts the `data` of a `${ctx.name}` response into a '
+          'typed value.')
+      ..writeln(
+          '$returnType parse${ctx.pascal}Data(Map<String, dynamic>? data) {')
+      ..writeln('  if (data == null) {')
+      ..writeln('    $noData')
+      ..writeln('  }')
+      ..writeln('  return ${classes.parseExpr('data')};')
+      ..writeln('}')
+      ..writeln();
+    buffer.write(classes.code);
     return buffer.toString();
   }
 
@@ -507,29 +657,45 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
     final t =
         ctx.returnType.endsWith('?') ? ctx.returnType : '${ctx.returnType}?';
     final options = '${ctx.camel}QueryOptions';
+    final classes = ctx.classes;
+    final data = classes?.writeType ?? 'Map<String, dynamic>';
     final (readParams, writeParams, evictParams, args) =
         switch (ctx.variablesKind) {
       _VariablesKind.required => (
           '$vars variables, {bool optimistic = true}',
-          '$vars variables, Map<String, dynamic> data, '
-              '{bool broadcast = true}',
+          '$vars variables, $data data, {bool broadcast = true}',
           '$vars variables',
           'variables',
         ),
       _VariablesKind.optional => (
           '{$vars? variables, bool optimistic = true}',
-          'Map<String, dynamic> data, '
-              '{$vars? variables, bool broadcast = true}',
+          '$data data, {$vars? variables, bool broadcast = true}',
           '{$vars? variables}',
           'variables: variables',
         ),
       _VariablesKind.none => (
           '{bool optimistic = true}',
-          'Map<String, dynamic> data, {bool broadcast = true}',
+          '$data data, {bool broadcast = true}',
           '',
           '',
         ),
     };
+    final write = classes == null
+        ? '''
+  /// Writes raw `data` for `${ctx.name}` into the cache, shaped as the server
+  /// returns it, including `__typename` on every object (also the root).
+  void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
+    this.writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
+  }
+'''
+        : '''
+  /// Writes `data` for `${ctx.name}` into the cache, as if the server had
+  /// returned it.
+  void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
+    this.writeQuery($options($args).asRequest,
+        data: ${classes.writeExpr('data')}, broadcast: broadcast);
+  }
+''';
     return '''
 
   /// Reads `${ctx.name}` from the cache; null when it isn't cached.
@@ -539,12 +705,7 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
     return data == null ? null : parse${ctx.pascal}Data(data);
   }
 
-  /// Writes raw `data` for `${ctx.name}` into the cache, shaped as the server
-  /// returns it, including `__typename` on every object (also the root).
-  void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
-    this.writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
-  }
-
+$write
   /// Removes the cached root fields of `${ctx.name}` for these variables, so
   /// the next `cacheFirst` read fetches it again. Returns whether anything was
   /// removed. Objects it pointed to stay cached, and active `watchQuery`
@@ -584,121 +745,6 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
   // Type helpers
   // ---------------------------------------------------------------------------
 
-  /// Dart type for a GraphQL output type. In legacy (non-strict) mode every
-  /// level is nullable, matching previous releases.
-  static String _outputDartType(TypeNode type,
-      {required bool legacy, bool forceNullable = false}) {
-    final nullable = forceNullable || legacy || !type.isNonNull;
-    final base = type is ListTypeNode
-        ? 'List<${_outputDartType(type.type, legacy: legacy)}>'
-        : _namedDartType((type as NamedTypeNode).name.value);
-    return _nullable(base, nullable);
-  }
-
-  static String _namedDartType(String name) {
-    final known = CodegenConfigContext.scalarMapping.containsKey(name) ||
-        GraphQLConstants.scalarToDartType.containsKey(name) ||
-        const {'Decimal', 'Long', 'Byte'}.contains(name) ||
-        TypeRegistry.isEnum(name) ||
-        TypeRegistry.isCustomScalar(name) ||
-        TypeRegistry.objectTypes.contains(name) ||
-        TypeRegistry.isAbstract(name) ||
-        TypeRegistry.inputTypes.contains(name);
-    if (!known) return 'dynamic';
-    return SchemaAnalyzer.getDartType(
-        NamedTypeNode(name: NameNode(value: name), isNonNull: true));
-  }
-
-  /// Dart types a JSON value can be used as directly.
-  static bool _isJsonNative(String type) =>
-      const {'String', 'int', 'double', 'num', 'bool', 'Object', 'dynamic'}
-          .contains(type.replaceAll('?', '')) ||
-      type.startsWith('Map<') ||
-      type.startsWith('List<');
-
-  static String _nullable(String type, bool nullable) =>
-      nullable && type != 'dynamic' ? '$type?' : type;
-
-  /// Expression converting the JSON value [v] into the Dart value of [type].
-  static String _fromJsonExpr(TypeNode type, String v,
-      {required bool legacy,
-      required Set<String> definedTypes,
-      bool forceNullable = false}) {
-    final nullable = forceNullable || legacy || !type.isNonNull;
-    final String inner;
-    if (type is ListTypeNode) {
-      final item = _fromJsonExpr(type.type, 'e',
-          legacy: legacy, definedTypes: definedTypes);
-      inner = '($v as List<dynamic>).map((e) => $item).toList()';
-    } else {
-      inner =
-          _namedFromJson((type as NamedTypeNode).name.value, v, definedTypes);
-    }
-    return nullable ? '($v == null ? null : $inner)' : inner;
-  }
-
-  static String _namedFromJson(
-      String name, String v, Set<String> definedTypes) {
-    final mapped = CodegenConfigContext.scalarMapping[name];
-    if (mapped != null) {
-      final converter = CodegenConfigContext.scalarConverters[name];
-      if (converter != null) return 'const $converter().fromJson($v)';
-      switch (mapped) {
-        case 'int':
-          return 'const SafeIntConverter().fromJson($v)';
-        case 'double':
-          return 'const SafeDoubleConverter().fromJson($v)';
-        case 'bool':
-          return 'const SafeBoolConverter().fromJson($v)';
-        case 'String':
-          return 'const SafeStringConverter().fromJson($v)';
-        case 'DateTime':
-          return 'const DateTimeConverter().fromJson($v)';
-        default:
-          return _isJsonNative(mapped)
-              ? '$v as $mapped'
-              : '$mapped.fromJson($v)';
-      }
-    }
-    // A schema type named like a built-in scalar (e.g. `type Decimal`) is
-    // handled as the type the generator declares for it.
-    switch (TypeRegistry.declaresType(name) ? '' : name) {
-      case 'Int':
-      case 'Short':
-        return 'const SafeIntConverter().fromJson($v)';
-      case 'Float':
-        return 'const SafeDoubleConverter().fromJson($v)';
-      case 'Boolean':
-        return 'const SafeBoolConverter().fromJson($v)';
-      case 'String':
-      case 'ID':
-        return 'const SafeStringConverter().fromJson($v)';
-      case 'DateTime':
-        return 'const DateTimeConverter().fromJson($v)';
-      case 'LocalDate':
-        return 'const LocalDateConverter().fromJson($v)';
-      case 'Decimal':
-        return 'const SafeDecimalConverter().fromJson($v)';
-      case 'Long':
-        return 'const LongConverter().fromJson($v)';
-      case 'Byte':
-        return 'const ByteConverter().fromJson($v)';
-    }
-    final dartName = SchemaAnalyzer.dartTypeName(name);
-    if (TypeRegistry.isEnum(name)) {
-      return 'const ${dartName}Converter().fromJson($v as String)';
-    }
-    if (TypeRegistry.isCustomScalar(name)) {
-      return 'const ${dartName}Converter().fromJson($v)';
-    }
-    if (TypeRegistry.objectTypes.contains(name) ||
-        TypeRegistry.isAbstract(name) ||
-        definedTypes.contains(name)) {
-      return '$dartName.fromJson($v as Map<String, dynamic>)';
-    }
-    return v;
-  }
-
   /// Returns [s] as a Dart string literal (raw triple-quoted when possible).
   static String _dartStringLiteral(String s) {
     if (!s.contains('"""')) return 'r"""\n$s\n"""';
@@ -730,7 +776,12 @@ class _OperationContext {
   final bool strict;
   final String camel;
   final String pascal;
+
+  /// Root fields of the schema-typed result (`result_types: schema`).
   late final List<_RootField> rootFields;
+
+  /// Result classes (`result_types: operation`).
+  OperationClasses? classes;
 
   _OperationContext({
     required this.name,
@@ -738,9 +789,16 @@ class _OperationContext {
     required DocumentNode schema,
     required Set<String> definedTypes,
     required this.strict,
+    required Map<String, FragmentDefinitionNode> fragments,
   })  : camel = name.toCamelCase(),
         pascal = name.capitalize() {
     final rootType = _rootType(schema);
+    if (CodegenConfigContext.operationResultTypes) {
+      rootFields = const [];
+      classes = OperationTypes(schema, fragments)
+          .operation(operation, name, rootType.name.value);
+      return;
+    }
     rootFields = [
       for (final sel in operation.selectionSet.selections)
         if (sel is FieldNode && sel.name.value != '__typename')
@@ -768,6 +826,8 @@ class _OperationContext {
 
   /// Return type of the generated `*Data` method / `parse*Data` function.
   String get returnType {
+    final classes = this.classes;
+    if (classes != null) return classes.returnType;
     if (rootFields.isEmpty) return 'Map<String, dynamic>?';
     if (rootFields.length == 1) return rootFields.single.dartType;
     return strict ? resultClassName : '$resultClassName?';
@@ -819,9 +879,9 @@ class _OperationContext {
     return _RootField(
       responseKey,
       dartFieldName(responseKey, className: resultClassName),
-      ClientExtensionGenerator._outputDartType(type,
+      JsonExprs.outputDartType(type,
           legacy: !strict, forceNullable: conditional),
-      (v) => ClientExtensionGenerator._fromJsonExpr(type, v,
+      (v) => JsonExprs.fromJsonExpr(type, v,
           legacy: !strict,
           definedTypes: definedTypes,
           forceNullable: conditional),

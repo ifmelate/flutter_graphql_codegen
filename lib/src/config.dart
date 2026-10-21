@@ -47,6 +47,10 @@ class GraphQLCodegenConfig {
   /// selections) before generating code for them.
   final bool validateDocuments;
 
+  /// `operation` (default): result classes per operation, with only the
+  /// selected fields. `schema`: one class per schema type, as in 2.x.
+  final String resultTypes;
+
   /// HTTP headers sent when downloading a remote schema. Values may reference
   /// environment variables as `${NAME}`.
   final Map<String, String> schemaHeaders;
@@ -61,7 +65,7 @@ class GraphQLCodegenConfig {
     'strict_nullability', 'file_naming', 'emit_index', 'scalar_mapping',
     'schema_headers', 'diagnostics_format', 'unknown_enum_fallback',
     'deprecated_annotations', 'validate_documents', 'strict_scalars',
-    'schema_endpoint', 'include_null_inputs',
+    'schema_endpoint', 'include_null_inputs', 'result_types',
   };
 
   GraphQLCodegenConfig({
@@ -77,6 +81,7 @@ class GraphQLCodegenConfig {
     this.deprecatedAnnotations = false,
     this.includeNullInputs = false,
     this.validateDocuments = true,
+    this.resultTypes = 'operation',
     Map<String, String>? scalarMapping,
     Map<String, String>? scalarImports,
     Map<String, String>? scalarConverters,
@@ -144,6 +149,15 @@ class GraphQLCodegenConfig {
       final includeNullInputs =
           yamlMap['include_null_inputs'] as bool? ?? false;
       final validateDocuments = yamlMap['validate_documents'] as bool? ?? true;
+      final resultTypes =
+          (yamlMap['result_types'] as String?)?.trim() ?? 'operation';
+      if (resultTypes != 'operation' && resultTypes != 'schema') {
+        throw CodegenException(
+          CodegenErrorCodes.cfgInvalid,
+          'Invalid result_types "$resultTypes". Valid options: operation, '
+          'schema',
+        );
+      }
       diagFormat =
           (yamlMap['diagnostics_format'] as String?)?.trim() ?? 'plain';
       final diagnosticsFormat = diagFormat;
@@ -219,6 +233,7 @@ class GraphQLCodegenConfig {
         deprecatedAnnotations: deprecatedAnnotations,
         includeNullInputs: includeNullInputs,
         validateDocuments: validateDocuments,
+        resultTypes: resultTypes,
         scalarMapping: scalarMappingMap,
         scalarImports: scalarImports,
         scalarConverters: scalarConverters,
