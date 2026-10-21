@@ -6,6 +6,8 @@ void main() {
   group('LocalDate Converter Tests', () {
     setUp(() {
       CodegenConfigContext.strictNullability = true;
+      // Covers the json_serializable classes of `result_types: schema`.
+      CodegenConfigContext.resultTypes = 'schema';
     });
 
     tearDown(() {

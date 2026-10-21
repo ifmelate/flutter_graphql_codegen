@@ -79,6 +79,8 @@ ${_base}scalar_mapping:
     late String types;
     setUp(() {
       _configure();
+      // Covers the json_serializable classes of `result_types: schema`.
+      CodegenConfigContext.resultTypes = 'schema';
       types = TypeGenerator.generateTypesFile(_schema);
     });
 
@@ -152,6 +154,7 @@ ${_base}scalar_mapping:
     });
 
     test('accepts mapped and built-in scalars', () {
+      CodegenConfigContext.resultTypes = 'schema';
       CodegenConfigContext.strictScalars = true;
       CodegenConfigContext.scalarMapping = {'JSON': 'Map<String, dynamic>'};
       expect(

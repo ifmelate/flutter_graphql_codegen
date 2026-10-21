@@ -1,7 +1,12 @@
 import 'package:test/test.dart';
+import 'package:flutter_graphql_codegen/src/config_context.dart';
 import 'package:flutter_graphql_codegen/src/type_generator.dart';
 
 void main() {
+  // Covers the json_serializable classes of `result_types: schema`.
+  setUp(() => CodegenConfigContext.resultTypes = 'schema');
+  tearDown(CodegenConfigContext.reset);
+
   group('DateTimeConverter GraphQL Format Tests', () {
     test(
         'should generate correct GraphQL DateTime format with milliseconds and timezone',
