@@ -10,7 +10,7 @@ void main() {
       // Clear type registry before each test
       TypeRegistry.clear();
       CodegenConfigContext.strictNullability = true;
-      // Covers the json_serializable classes of `result_types: schema`.
+      // These tests describe operation files returning schema classes.
       CodegenConfigContext.resultTypes = 'schema';
     });
 

@@ -124,11 +124,65 @@ query GetUser($id: ID!) { user(id: $id) { id name } }
   });
 
   test('skips schema and fragment-only documents', () async {
+    CodegenConfigContext.resultTypes = 'schema';
     await run({
       'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
     });
     expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
     expect(output('types.dart'), isNull);
+    expect(output('fragments.dart'), isNull);
+  });
+
+  test('schema result types write no fragments.dart', () async {
+    CodegenConfigContext.resultTypes = 'schema';
+    await run({
+      'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
+      'a|lib/graphql/a.graphql':
+          r'query GetUser($id: ID!) { user(id: $id) { ...UserBits } }',
+    });
+    expect(output('get_user_graphql.g.dart'), isNot(contains('fragments')));
+    expect(output('fragments.dart'), isNull);
+    expect(output('index.dart'), isNot(contains('fragments.dart')));
+  });
+
+  test('fragment-only documents write fragments.dart', () async {
+    await run({
+      'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
+    });
+    expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    final fragments = output('fragments.dart')!;
+    expect(fragments, contains('abstract interface class UserBits {'));
+    expect(fragments, contains('class UserBitsData implements UserBits {'));
+    expect(fragments, contains('final userBitsFragment = graphql.gql('));
+    expect(output('index.dart'), contains("export 'fragments.dart';"));
+  });
+
+  test('fragments.dart follows fragment changes, operations import it',
+      () async {
+    const operation =
+        r'query GetUser($id: ID!) { user(id: $id) { ...UserBits } }';
+    const other = 'query GetVersion { version }';
+    await run({
+      'a|lib/graphql/fragments.graphql': 'fragment UserBits on User { id }',
+      'a|lib/graphql/a.graphql': operation,
+      'a|lib/graphql/b.graphql': other,
+    });
+    expect(logs.where((l) => l.startsWith('SEVERE')), isEmpty);
+    final getUser = output('get_user_graphql.g.dart')!;
+    expect(getUser, contains("import 'fragments.dart';"));
+    expect(getUser, contains('class GetUser_User implements UserBits {'));
+    expect(output('get_version_graphql.g.dart'),
+        isNot(contains("import 'fragments.dart';")));
+    expect(output('index.dart'), contains("export 'fragments.dart';"));
+
+    await run({
+      'a|lib/graphql/fragments.graphql':
+          'fragment UserBits on User { id name }',
+      'a|lib/graphql/a.graphql': operation,
+      'a|lib/graphql/b.graphql': other,
+    });
+    expect(output('fragments.dart'), contains('String? get name;'));
+    expect(output('get_user_graphql.g.dart'), contains('final String? name;'));
   });
 
   test('warns about anonymous operations', () async {

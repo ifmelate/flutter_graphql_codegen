@@ -40,6 +40,16 @@ class GraphQLCodeGenerator {
     );
   }
 
+  /// Generates `fragments.dart` (`result_types: operation`): per fragment its
+  /// document, an interface with its fields and a `<Fragment>Data` class.
+  ///
+  /// Returns null when [fragments] is empty.
+  static String? generateFragmentsFile(
+      String schema, Map<String, FragmentDefinitionNode> fragments) {
+    return ClientExtensionGenerator.generateFragmentsFile(
+        gql_lang.parseString(schema), fragments);
+  }
+
   /// Extracts defined types from types content
   static Set<String> extractDefinedTypes(String typesContent) {
     return OperationAnalyzer.extractDefinedTypes(typesContent);

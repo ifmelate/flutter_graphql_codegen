@@ -86,6 +86,57 @@ class DocumentUtils {
     ]);
   }
 
+  /// Builds a standalone document for fragment [name]: the fragment first,
+  /// then every fragment it uses (transitively, sorted), with `__typename`
+  /// added like [buildOperationDocument] does. This is the document
+  /// `readFragment` / `writeFragment` expect.
+  static DocumentNode buildFragmentDocument(
+    String name,
+    Map<String, FragmentDefinitionNode> fragments,
+  ) {
+    final used = <String>{name};
+    void visit(SelectionSetNode set) {
+      for (final sel in set.selections) {
+        if (sel is FieldNode && sel.selectionSet != null) {
+          visit(sel.selectionSet!);
+        } else if (sel is InlineFragmentNode) {
+          visit(sel.selectionSet);
+        } else if (sel is FragmentSpreadNode) {
+          final spread = sel.name.value;
+          if (used.add(spread)) {
+            final fragment = fragments[spread];
+            if (fragment == null) {
+              throw CodegenException(
+                CodegenErrorCodes.buildMissingFragment,
+                'Fragment "$name" uses unknown fragment "$spread"',
+              );
+            }
+            visit(fragment.selectionSet);
+          }
+        }
+      }
+    }
+
+    final root = fragments[name];
+    if (root == null) {
+      throw CodegenException(
+        CodegenErrorCodes.buildMissingFragment,
+        'Unknown fragment "$name"',
+      );
+    }
+    visit(root.selectionSet);
+    final others = used.where((n) => n != name).toList()..sort();
+    return DocumentNode(definitions: [
+      for (final n in [name, ...others])
+        FragmentDefinitionNode(
+          name: fragments[n]!.name,
+          typeCondition: fragments[n]!.typeCondition,
+          directives: fragments[n]!.directives,
+          selectionSet: _addTypename(fragments[n]!.selectionSet, isRoot: false),
+        ),
+    ]);
+  }
+
   static SelectionSetNode _addTypename(SelectionSetNode set,
       {required bool isRoot}) {
     final selections = <SelectionNode>[

@@ -10,6 +10,7 @@ import 'document_utils.dart';
 import 'document_validator.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
+import 'operation_types.dart';
 import 'schema_analyzer.dart';
 import 'type_generator.dart';
 
@@ -32,23 +33,67 @@ class ClientExtensionGenerator {
     final operation = _findOperation(
         gql_lang.parseString(operationDocumentContent), operationName);
     final scalarImports = TypeGenerator.scalarImportDirectives();
-    final body = generateClientExtension(
+    final (body, usesFragments) = _generate(
       operationName,
-      operationType,
       operationDocumentContent,
       schemaDoc,
       definedTypes,
       fragments: fragments,
     );
+    final ignores = CodegenConfigContext.operationResultTypes
+        ? 'unused_import, deprecated_member_use_from_same_package'
+        : 'unused_import';
     return '''${CodeGenerationConstants.generatedFileWarning}
 // Operation: $operationName (${operation.type.name})
-${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, unused_import
+${sourcePath == null ? '' : '// Source: $sourcePath\n'}${CodeGenerationConstants.ignoreForFile}, $ignores
 
 import 'package:graphql/client.dart' as graphql;
 import 'package:normalize/utils.dart' as normalize;
-import 'types.dart';
+${usesFragments ? "import 'fragments.dart';\n" : ''}import 'types.dart';
 $scalarImports
 $body''';
+  }
+
+  /// Generates `fragments.dart`: for every fragment its document, an
+  /// interface with its fields (implemented by the operation classes that
+  /// spread it) and a data class. Returns null when there are no fragments.
+  static String? generateFragmentsFile(
+    DocumentNode schemaDoc,
+    Map<String, FragmentDefinitionNode> fragments,
+  ) {
+    if (fragments.isEmpty) return null;
+    final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
+    SchemaAnalyzer.extractCustomTypesAndEnums(schema);
+    final types = OperationTypes(schema, fragments);
+    types.checkFragments();
+
+    final buffer = StringBuffer()
+      ..writeln(CodeGenerationConstants.generatedFileWarning)
+      ..writeln('// Fragments of all documents')
+      ..writeln('${CodeGenerationConstants.ignoreForFile}, unused_import, '
+          'deprecated_member_use_from_same_package')
+      ..writeln()
+      ..writeln("import 'package:graphql/client.dart' as graphql;")
+      ..writeln("import 'types.dart';")
+      ..write(TypeGenerator.scalarImportDirectives())
+      ..writeln();
+    for (final name in types.fragmentNames) {
+      final camel = name.toCamelCase();
+      final document = gql_lang
+          .printNode(DocumentUtils.buildFragmentDocument(name, fragments));
+      buffer
+        ..writeln('/// GraphQL document of the `$name` fragment (with the '
+            'fragments it uses).')
+        ..writeln('final ${camel}Fragment = graphql.gql('
+            '${_dartStringLiteral(document)});')
+        ..writeln()
+        ..writeln("const String ${camel}FragmentName = '$name';")
+        ..writeln()
+        ..write(types.fragmentInterfaces(name))
+        ..write(types.fragmentData(name));
+    }
+    buffer.write(types.support);
+    return buffer.toString();
   }
 
   /// Generates the client code for a GraphQL operation: the document constant,
@@ -61,6 +106,22 @@ $body''';
   static String generateClientExtension(
     String operationName,
     String operationType,
+    String operationDocumentContent,
+    DocumentNode schemaDoc,
+    Set<String> definedTypes, {
+    Map<String, FragmentDefinitionNode> fragments = const {},
+  }) =>
+      _generate(
+        operationName,
+        operationDocumentContent,
+        schemaDoc,
+        definedTypes,
+        fragments: fragments,
+      ).$1;
+
+  /// [generateClientExtension] plus whether the code uses `fragments.dart`.
+  static (String, bool) _generate(
+    String operationName,
     String operationDocumentContent,
     DocumentNode schemaDoc,
     Set<String> definedTypes, {
@@ -85,6 +146,7 @@ $body''';
       schema: schema,
       definedTypes: definedTypes,
       strict: CodegenConfigContext.strictNullability,
+      fragments: allFragments,
     );
 
     final document = gql_lang.printNode(
@@ -103,10 +165,13 @@ $body''';
     final variables = _generateVariablesClass(context);
     if (variables.isNotEmpty) buffer.writeln(variables);
 
-    buffer.writeln(_generateParser(context));
+    final classes = context.classes;
+    buffer.writeln(classes == null
+        ? _generateParser(context)
+        : _generateTypedParser(context, classes));
     buffer.writeln(_generateOptions(context));
     buffer.write(_generateExtension(context));
-    return buffer.toString();
+    return (buffer.toString(), classes?.usesFragments ?? false);
   }
 
   static OperationDefinitionNode _findOperation(
@@ -237,6 +302,28 @@ $body''';
         ..writeln()
         ..write(_generateResultClass(ctx));
     }
+    return buffer.toString();
+  }
+
+  /// `parse*Data` and the result classes (`result_types: operation`).
+  static String _generateTypedParser(
+      _OperationContext ctx, OperationClasses classes) {
+    final returnType = classes.returnType;
+    final noData = returnType.endsWith('?')
+        ? 'return null;'
+        : "throw StateError('${ctx.name}: response contains no data');";
+    final buffer = StringBuffer()
+      ..writeln('/// Converts the `data` of a `${ctx.name}` response into a '
+          'typed value.')
+      ..writeln(
+          '$returnType parse${ctx.pascal}Data(Map<String, dynamic>? data) {')
+      ..writeln('  if (data == null) {')
+      ..writeln('    $noData')
+      ..writeln('  }')
+      ..writeln('  return ${classes.parseExpr('data')};')
+      ..writeln('}')
+      ..writeln();
+    buffer.write(classes.code);
     return buffer.toString();
   }
 
@@ -453,29 +540,45 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
     final t =
         ctx.returnType.endsWith('?') ? ctx.returnType : '${ctx.returnType}?';
     final options = '${ctx.camel}QueryOptions';
+    final classes = ctx.classes;
+    final data = classes?.writeType ?? 'Map<String, dynamic>';
     final (readParams, writeParams, evictParams, args) =
         switch (ctx.variablesKind) {
       _VariablesKind.required => (
           '$vars variables, {bool optimistic = true}',
-          '$vars variables, Map<String, dynamic> data, '
-              '{bool broadcast = true}',
+          '$vars variables, $data data, {bool broadcast = true}',
           '$vars variables',
           'variables',
         ),
       _VariablesKind.optional => (
           '{$vars? variables, bool optimistic = true}',
-          'Map<String, dynamic> data, '
-              '{$vars? variables, bool broadcast = true}',
+          '$data data, {$vars? variables, bool broadcast = true}',
           '{$vars? variables}',
           'variables: variables',
         ),
       _VariablesKind.none => (
           '{bool optimistic = true}',
-          'Map<String, dynamic> data, {bool broadcast = true}',
+          '$data data, {bool broadcast = true}',
           '',
           '',
         ),
     };
+    final write = classes == null
+        ? '''
+  /// Writes raw `data` for `${ctx.name}` into the cache, shaped as the server
+  /// returns it, including `__typename` on every object (also the root).
+  void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
+    this.writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
+  }
+'''
+        : '''
+  /// Writes `data` for `${ctx.name}` into the cache, as if the server had
+  /// returned it.
+  void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
+    this.writeQuery($options($args).asRequest,
+        data: ${classes.writeExpr('data')}, broadcast: broadcast);
+  }
+''';
     return '''
 
   /// Reads `${ctx.name}` from the cache; null when it isn't cached.
@@ -485,12 +588,7 @@ ${isMutation ? '' : _generateCacheHelpers(ctx)}}
     return data == null ? null : parse${ctx.pascal}Data(data);
   }
 
-  /// Writes raw `data` for `${ctx.name}` into the cache, shaped as the server
-  /// returns it, including `__typename` on every object (also the root).
-  void ${_extensionMember('write${ctx.pascal}')}($writeParams) {
-    this.writeQuery($options($args).asRequest, data: data, broadcast: broadcast);
-  }
-
+$write
   /// Removes the cached root fields of `${ctx.name}` for these variables, so
   /// the next `cacheFirst` read fetches it again. Returns whether anything was
   /// removed. Objects it pointed to stay cached, and active `watchQuery`
@@ -561,7 +659,12 @@ class _OperationContext {
   final bool strict;
   final String camel;
   final String pascal;
+
+  /// Root fields of the schema-typed result (`result_types: schema`).
   late final List<_RootField> rootFields;
+
+  /// Result classes (`result_types: operation`).
+  OperationClasses? classes;
 
   _OperationContext({
     required this.name,
@@ -569,9 +672,16 @@ class _OperationContext {
     required DocumentNode schema,
     required Set<String> definedTypes,
     required this.strict,
+    required Map<String, FragmentDefinitionNode> fragments,
   })  : camel = name.toCamelCase(),
         pascal = name.capitalize() {
     final rootType = _rootType(schema);
+    if (CodegenConfigContext.operationResultTypes) {
+      rootFields = const [];
+      classes = OperationTypes(schema, fragments)
+          .operation(operation, name, rootType.name.value);
+      return;
+    }
     rootFields = [
       for (final sel in operation.selectionSet.selections)
         if (sel is FieldNode && sel.name.value != '__typename')
@@ -599,6 +709,8 @@ class _OperationContext {
 
   /// Return type of the generated `*Data` method / `parse*Data` function.
   String get returnType {
+    final classes = this.classes;
+    if (classes != null) return classes.returnType;
     if (rootFields.isEmpty) return 'Map<String, dynamic>?';
     if (rootFields.length == 1) return rootFields.single.dartType;
     return strict ? resultClassName : '$resultClassName?';

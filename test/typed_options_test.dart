@@ -20,6 +20,7 @@ void main() {
   setUp(() {
     CodegenConfigContext.reset();
     CodegenConfigContext.strictNullability = true;
+    CodegenConfigContext.resultTypes = 'schema';
   });
   tearDown(CodegenConfigContext.reset);
 
@@ -108,5 +109,63 @@ void main() {
         code,
         contains('graphql.SubscriptionOptions<User> '
             'userChangedSubscriptionOptions({\n'));
+  });
+
+  group('result_types: operation', () {
+    setUp(() => CodegenConfigContext.resultTypes = 'operation');
+
+    test('options and cache helpers use the operation classes', () {
+      final code = _generate(
+          r'query GetUser($id: ID!) { user(id: $id) { id name } }',
+          'GetUser',
+          'query');
+      expect(
+          code,
+          contains('graphql.QueryOptions<GetUser_User?> getUserQueryOptions(\n'
+              '  GetUserVariables variables, {\n'));
+      expect(
+          code,
+          contains('  GetUser_User? readGetUser(GetUserVariables variables, '
+              '{bool optimistic = true}) {\n'));
+      expect(
+          code,
+          contains('  void writeGetUser(GetUserVariables variables, '
+              'GetUser_User? data, {bool broadcast = true}) {\n'));
+      expect(
+          code,
+          contains("data: <String, dynamic>{'__typename': 'Query', "
+              "'user': data?.toJson()}"));
+    });
+
+    test('several root fields write the result class', () {
+      final code =
+          _generate('query Both { users { id } version }', 'Both', 'query');
+      expect(
+          code, contains('graphql.QueryOptions<BothResult> bothQueryOptions'));
+      expect(code,
+          contains('void writeBoth(BothResult data, {bool broadcast = true})'));
+      expect(
+          code,
+          contains("data: <String, dynamic>{'__typename': 'Query', "
+              '...data.toJson()}'));
+    });
+
+    test('mutations and subscriptions are typed by their classes', () {
+      final mutation = _generate(
+          r'mutation Rename($id: ID!, $name: String!) '
+              r'{ rename(id: $id, name: $name) { id } }',
+          'Rename',
+          'mutation');
+      expect(mutation,
+          contains('  graphql.OnMutationUpdate<Rename_Rename?>? update,\n'));
+      final subscription = _generate(
+          'subscription UserChanged { userChanged { id } }',
+          'UserChanged',
+          'subscription');
+      expect(
+          subscription,
+          contains('graphql.SubscriptionOptions<UserChanged_UserChanged> '
+              'userChangedSubscriptionOptions({\n'));
+    });
   });
 }
