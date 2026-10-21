@@ -42,6 +42,17 @@ void main() {
       expect(code, contains('    parserFn: parseGetUserData,\n'));
     });
 
+    test('pass onComplete and onError on to QueryOptions', () {
+      expect(
+          code,
+          contains('  Duration? pollInterval,\n'
+              '  graphql.OnQueryComplete? onComplete,\n'
+              '  graphql.OnQueryError? onError,\n'
+              '}) =>\n'));
+      expect(code, contains('    onComplete: onComplete,\n'));
+      expect(code, contains('    onError: onError,\n'));
+    });
+
     test('get typed WatchQueryOptions', () {
       expect(
           code,
