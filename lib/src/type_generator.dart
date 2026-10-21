@@ -38,6 +38,7 @@ class TypeGenerator {
   static String generateTypesFile(String schema) {
     final schemaDoc =
         DocumentUtils.mergeSchemaExtensions(gql_lang.parseString(schema));
+    _checkStructure(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schemaDoc);
     _checkStrictScalars();
     _nullableConverters.clear();
@@ -310,6 +311,58 @@ ${_generateNullableConverters()}''';
   }
 
   /// With `strict_scalars`, custom scalars must have a `scalar_mapping`.
+  /// Rejects schemas the spec doesn't allow and the generator can't turn into
+  /// valid Dart: empty types and an interface implemented twice. Runs after
+  /// `extend` definitions are merged, so fields they add count.
+  static void _checkStructure(DocumentNode schemaDoc) {
+    final problems = <String>[];
+    void interfaces(String name, List<NamedTypeNode> list) {
+      final seen = <String>{};
+      for (final i in list) {
+        if (!seen.add(i.name.value)) {
+          problems.add('$name: implements ${i.name.value} more than once');
+        }
+      }
+    }
+
+    for (final d in schemaDoc.definitions) {
+      switch (d) {
+        case ObjectTypeDefinitionNode(:final name, :final fields):
+          if (fields.isEmpty) {
+            problems
+                .add('${name.value}: an object type needs at least one field');
+          }
+          interfaces(name.value, d.interfaces);
+        case InterfaceTypeDefinitionNode(:final name, :final fields):
+          if (fields.isEmpty) {
+            problems
+                .add('${name.value}: an interface needs at least one field');
+          }
+          interfaces(name.value, d.interfaces);
+        case InputObjectTypeDefinitionNode(:final name, :final fields):
+          if (fields.isEmpty) {
+            problems
+                .add('${name.value}: an input type needs at least one field');
+          }
+        case UnionTypeDefinitionNode(:final name, :final types):
+          if (types.isEmpty) {
+            problems.add('${name.value}: a union needs at least one member');
+          }
+        case EnumTypeDefinitionNode(:final name, :final values):
+          if (values.isEmpty) {
+            problems.add('${name.value}: an enum needs at least one value');
+          }
+        default:
+      }
+    }
+    if (problems.isEmpty) return;
+    throw CodegenException(
+      CodegenErrorCodes.schemaInvalidStructure,
+      'The schema has types the GraphQL spec does not allow:\n'
+      '${problems.map((p) => '  - $p').join('\n')}',
+    );
+  }
+
   static void _checkStrictScalars() {
     if (!CodegenConfigContext.strictScalars) return;
     final unmapped = TypeRegistry.customScalars

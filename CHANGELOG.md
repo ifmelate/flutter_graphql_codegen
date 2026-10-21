@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `part 'types.g.dart'`, which json_serializable never writes
 - A schema type named `Enum` clashed with the built-in `EnumConverter`; it is
   now `Enum_`, like other `dart:core` names
+- Empty types (`type Mutation {}`), unions and enums, and an interface listed
+  twice in `implements` produced code that didn't compile. The build now fails
+  with `SCH402`, listing every such type
 
 ## [2.4.1] - 2026-10-21
 

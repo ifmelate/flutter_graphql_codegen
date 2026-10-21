@@ -388,6 +388,7 @@ Problems found during generation are reported with a code:
 | `CFG999` | Other config problem (bad value, unset env variable in `schema_headers`) |
 | `SCH400` | The schema doesn't parse |
 | `SCH401` | A custom scalar has no `scalar_mapping` entry and `strict_scalars` is on |
+| `SCH402` | The schema has types the spec doesn't allow: an object, interface or input type without fields, a union without members, an enum without values, an interface implemented twice |
 | `SCH404` | Schema file not found |
 | `SCH500` | Remote schema download failed; the message lists every attempt |
 | `BLD100` | An operation file doesn't parse |
