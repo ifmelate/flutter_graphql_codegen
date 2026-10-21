@@ -139,6 +139,7 @@ query GetUser($id: ID!) { user(id: $id) { id name } }
     expect(fragments, contains('abstract interface class UserBits {'));
     expect(fragments, contains('class UserBitsData implements UserBits {'));
     expect(fragments, contains('final userBitsFragment = graphql.gql('));
+    expect(output('index.dart'), contains("export 'fragments.dart';"));
   });
 
   test('fragments.dart follows fragment changes, operations import it',

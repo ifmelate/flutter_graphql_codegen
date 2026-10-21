@@ -461,12 +461,12 @@ class GraphQLCodegenBuilder implements Builder {
         operations.add('// $operationName');
       }
 
-      if (exports.isEmpty) {
+      final hasFragments =
+          File(p.join(config.outputDir, 'fragments.dart')).existsSync();
+      if (exports.isEmpty && !hasFragments) {
         log.fine('No generated GraphQL files found for index');
         return;
       }
-      final hasFragments =
-          File(p.join(config.outputDir, 'fragments.dart')).existsSync();
 
       final import = packageImportOf(package, config.outputDir);
       final usage = import == null ? '' : "\n// Usage: import '$import';\n";
