@@ -96,6 +96,13 @@ Future<int> runFetchSchema(
     usage('The endpoint must be an http(s) URL: $endpoint');
     return _usageError;
   }
+  if (options['output'] == null &&
+      output != null &&
+      output.startsWith('package:')) {
+    usage('schema_url in $configPath is a package: URI ($output); fetch the '
+        'schema in that package or pass --output.');
+    return _usageError;
+  }
   if (output == null) {
     usage(config == null
         ? 'No output file: pass --output.'
