@@ -32,8 +32,10 @@ Map<String, String> _generate(
   Map<String, String> scalarMapping = const {},
   Map<String, String> scalarImports = const {},
   Map<String, String> scalarConverters = const {},
+  String resultTypes = 'schema',
 }) {
   CodegenConfigContext.reset();
+  CodegenConfigContext.resultTypes = resultTypes;
   CodegenConfigContext.strictNullability = strict;
   CodegenConfigContext.unknownEnumFallback = unknownEnumFallback;
   CodegenConfigContext.deprecatedAnnotations = deprecatedAnnotations;
@@ -769,6 +771,205 @@ void main() {
 }
 ''';
 
+// Input classes of `result_types: operation`, hand-written in types.dart.
+const _opTypesSchema = r'''
+scalar JSON
+scalar DateTime
+scalar LocalDate
+scalar Decimal
+scalar Long
+scalar Money
+
+enum Status { ACTIVE default _hidden }
+
+"""
+Product filter.
+"""
+input ProductFilter {
+  _id: ID
+  name: String!
+  int: Int
+  class: String
+  status: Status
+  statuses: [Status!]
+  tags: [String!]!
+  grid: [[Int]]
+  since: DateTime
+  days: [LocalDate]
+  price: Decimal
+  total: Long
+  meta: JSON
+  metas: [JSON]
+  page: Page
+  pages: [Page!]
+  other: Int
+  value: String
+  json: String
+  e: Int
+  old: String @deprecated(reason: "Use name")
+  money: Money
+  monies: [Money]
+}
+
+input Page { first: Int! after: String }
+
+type Product { id: ID! }
+union Thing = Product
+type Query { products(filter: ProductFilter): [Product!]! thing: Thing }
+''';
+
+String _opTypesMain(String dir,
+        {bool nulls = false, bool fallback = false, bool mapped = false}) =>
+    '''
+import 'package:fgc_compile_check/$dir/types.dart';
+${mapped ? "import 'package:fgc_compile_check/scalars/money.dart';" : ''}
+
+const nulls = $nulls;
+const fallback = $fallback;
+const mapped = $mapped;
+''' +
+    r'''
+
+void check(bool condition, String message) {
+  if (!condition) throw StateError('Check failed: $message');
+}
+
+void main() {
+  const page = Page(first: 10);
+  final filter = ProductFilter(
+    id_: 'p1',
+    name: 'Lamp',
+    int_: 3,
+    class_: 'x',
+    status: Status.default_,
+    statuses: [Status.ACTIVE, Status.hidden_],
+    tags: ['a'],
+    grid: [
+      [1, null],
+      null
+    ],
+    since: DateTime.utc(2024, 5, 1),
+    days: [DateTime(2024, 5, 2), null],
+    price: Decimal('1.50'),
+    total: Long('12'),
+    meta: const JSON({'k': 1}),
+    metas: [const JSON('m'), null],
+    page: page,
+    pages: [page, const Page(first: 1, after: 'c')],
+    other: 1,
+    value: 'v',
+    json: 'j',
+    e: 2,
+    money: const Money(5),
+    monies: [const Money(6), null],
+  );
+
+  final json = filter.toJson();
+  check(json['_id'] == 'p1' && json['int'] == 3 && json['class'] == 'x',
+      'escaped fields keep their GraphQL names');
+  check(json['name'] == 'Lamp', 'string field');
+  check(json['status'] == 'default', 'escaped enum value');
+  check(graphqlDeepEquals(json['statuses'], ['ACTIVE', '_hidden']),
+      'enum list');
+  check(graphqlDeepEquals(json['tags'], ['a']), 'string list');
+  check(
+      graphqlDeepEquals(json['grid'], [
+        [1, null],
+        null
+      ]),
+      'nested list with nulls');
+  check(json['since'] == '2024-05-01T00:00:00.000Z', 'DateTime');
+  check(graphqlDeepEquals(json['days'], ['2024-05-02', null]), 'LocalDate list');
+  check(json['price'] == '1.50' && json['total'] == '12', 'Decimal and Long');
+  check(graphqlDeepEquals(json['meta'], {'k': 1}), 'custom scalar keeps raw JSON');
+  check(graphqlDeepEquals(json['metas'], ['m', null]), 'custom scalar list');
+  check(
+      graphqlDeepEquals(
+          json['page'], nulls ? {'first': 10, 'after': null} : {'first': 10}),
+      'nested input');
+  check(graphqlDeepEquals((json['pages'] as List)[1], {'first': 1, 'after': 'c'}),
+      'list of inputs');
+  check(json['other'] == 1 && json['value'] == 'v' && json['json'] == 'j' &&
+          json['e'] == 2,
+      'fields named like generated locals');
+  check(json['money'] == 5 && graphqlDeepEquals(json['monies'], [6, null]),
+      mapped ? 'scalar_mapping converter' : 'custom scalar wrapper');
+  check(json.containsKey('old') == nulls, 'unset field');
+  check(json.keys.length == (nulls ? 23 : 22), 'all fields written');
+
+  // Unset optional fields: left out unless include_null_inputs; lists
+  // default to empty as in json_serializable classes.
+  final empty = const ProductFilter(name: 'n').toJson();
+  check(empty.containsKey('int') == nulls && empty.containsKey('page') == nulls,
+      'null fields');
+  check(graphqlDeepEquals(empty['tags'], []) && graphqlDeepEquals(empty['pages'], []),
+      'lists default to empty');
+  if (nulls) check(empty['int'] == null, 'null written as null');
+
+  // fromJson round trip.
+  final back = ProductFilter.fromJson(json);
+  check(graphqlDeepEquals(back.toJson(), json), 'json round trip');
+  check(back.days![0]!.day == 2 && back.since!.isUtc, 'dates parsed');
+  check(back.page == page, 'nested input parsed');
+  if (!mapped) {
+    // Mapped Money has no ==, so only the wrapper compares by value.
+    check(back == filter && back.hashCode == filter.hashCode,
+        'equal after round trip');
+  }
+  check(ProductFilter.fromJson({'name': 'n'}) == const ProductFilter(name: 'n'),
+      'missing fields');
+
+  // Value equality, deep for lists.
+  final a = ProductFilter(name: 'n', tags: ['x'], pages: [const Page(first: 1)]);
+  final b = ProductFilter(name: 'n', tags: ['x'], pages: [const Page(first: 1)]);
+  check(a == b && a.hashCode == b.hashCode, 'lists compared by elements');
+  check(a != ProductFilter(name: 'n', tags: ['y']), 'different list');
+  check(a != const ProductFilter(name: 'm'), 'different field');
+
+  // copyWith changes the given fields, null included.
+  final copy = filter.copyWith(name: 'Desk', int_: null, page: null);
+  check(copy.name == 'Desk' && copy.int_ == null && copy.page == null,
+      'copyWith sets values and null');
+  check(copy.class_ == 'x' && copy.tags == filter.tags, 'other fields kept');
+  check(filter.copyWith() == filter, 'copyWith() keeps everything');
+  check(const Page(first: 1).copyWith(after: 'z').toJson()['after'] == 'z',
+      'copyWith on another input');
+
+  // Enums.
+  final parsed = ProductFilter.fromJson({
+    'name': 'n',
+    'status': '_hidden',
+    'statuses': ['default'],
+  });
+  check(parsed.status == Status.hidden_ && parsed.statuses![0] == Status.default_,
+      'enum values parsed');
+  Object? error;
+  try {
+    ProductFilter.fromJson({'name': 'n', 'status': 'NEW', 'statuses': ['NEW']});
+  } catch (e) {
+    error = e;
+  }
+  check((error == null) == fallback, 'unknown enum values');
+''' +
+    (fallback
+        ? r'''
+  final unknown = ProductFilter.fromJson(
+      {'name': 'n', 'status': 'NEW', 'statuses': ['NEW', 'ACTIVE']});
+  check(unknown.status == Status.$unknown, r'unknown value is $unknown');
+  check(unknown.statuses![0] == Status.$unknown, r'$unknown in a list');
+  try {
+    const ProductFilter(name: 'n', status: Status.$unknown).toJson();
+    throw StateError(r'Check failed: $unknown must not be serialized');
+  } on ArgumentError {
+    // expected
+  }
+'''
+        : '') +
+    '''
+  print('OP TYPES $dir OK');
+}
+''';
+
 void main() {
   test('generated code compiles and works', () async {
     final fixtureDir = p.join('test', 'fixtures');
@@ -816,6 +1017,33 @@ void main() {
           scalarConverters: {
             'Money': 'MoneyConverter'
           }),
+      // Operation result types: types.dart alone (operation files still
+      // use schema result types in these checks).
+      ..._generate('op_types', _opTypesSchema, const [],
+          strict: true, resultTypes: 'operation'),
+      ..._generate('op_types_legacy', _opTypesSchema, const [],
+          strict: false, resultTypes: 'operation'),
+      ..._generate('op_types_nulls', _opTypesSchema, const [],
+          strict: true, includeNullInputs: true, resultTypes: 'operation'),
+      ..._generate('op_types_fallback', _opTypesSchema, const [],
+          strict: true,
+          unknownEnumFallback: true,
+          deprecatedAnnotations: true,
+          resultTypes: 'operation'),
+      ..._generate('op_types_mapped', _opTypesSchema, const [],
+          strict: true,
+          scalarMapping: {'Money': 'Money'},
+          scalarImports: {
+            'Money': 'package:fgc_compile_check/scalars/money.dart'
+          },
+          scalarConverters: {'Money': 'MoneyConverter'},
+          resultTypes: 'operation'),
+      'bin/op_types.dart': _opTypesMain('op_types'),
+      'bin/op_types_legacy.dart': _opTypesMain('op_types_legacy'),
+      'bin/op_types_nulls.dart': _opTypesMain('op_types_nulls', nulls: true),
+      'bin/op_types_fallback.dart':
+          _opTypesMain('op_types_fallback', fallback: true),
+      'bin/op_types_mapped.dart': _opTypesMain('op_types_mapped', mapped: true),
       'lib/scalars/money.dart': _mappedLibrary,
       'bin/mapped.dart': _mappedMain,
       'bin/smoke.dart': _smokeMain,
@@ -826,6 +1054,13 @@ void main() {
       'bin/nulls.dart': _nullsMain('nulls', sendsNulls: true),
       'bin/nulls_default.dart': _nullsMain('nulls_default', sendsNulls: false),
     };
+
+    // Operation result types need no json_serializable output.
+    for (final entry in files.entries) {
+      if (entry.key.startsWith('lib/op_types')) {
+        expect(entry.value, isNot(contains('.g.dart')), reason: entry.key);
+      }
+    }
 
     final result = await compileGenerated(
       files,
@@ -838,6 +1073,11 @@ void main() {
         'bin/client_names.dart',
         'bin/nulls.dart',
         'bin/nulls_default.dart',
+        'bin/op_types.dart',
+        'bin/op_types_legacy.dart',
+        'bin/op_types_nulls.dart',
+        'bin/op_types_fallback.dart',
+        'bin/op_types_mapped.dart',
       ],
       // json_serializable's output uses deprecated members when they are
       // annotated; that trade-off of deprecated_annotations is documented.
