@@ -1,0 +1,6 @@
+schema_url: lib/graphql/schema.graphql
+schema_endpoint: https://countries.trevorblades.com/graphql
+output_dir: lib/graphql/generated
+document_paths:
+  - lib/graphql/documents/**/*.graphql
+strict_nullability: true

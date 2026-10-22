@@ -1,0 +1,11 @@
+# The token comes from the environment, never from this file. Any token that
+# can read public repositories works; only public data is read.
+schema_url: lib/graphql/schema.graphql
+schema_endpoint: https://api.github.com/graphql
+schema_headers:
+  Authorization: "bearer ${GITHUB_TOKEN}"
+output_dir: lib/graphql/generated
+document_paths:
+  - lib/graphql/documents/**/*.graphql
+strict_nullability: true
+unknown_enum_fallback: true

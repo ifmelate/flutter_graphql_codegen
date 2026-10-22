@@ -1,0 +1,6 @@
+schema_url: lib/graphql/schema.graphql
+schema_endpoint: https://rickandmortyapi.com/graphql
+output_dir: lib/graphql/generated
+document_paths:
+  - lib/graphql/documents/**/*.graphql
+# Default (legacy) nullability: every field is nullable.

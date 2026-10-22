@@ -1,0 +1,40 @@
+fragment CharacterCard on Character {
+  id
+  name
+  status
+  origin {
+    name
+  }
+}
+
+# Pagination, an input filter, a fragment next to more fields.
+query CharacterPage($page: Int, $filter: FilterCharacter) {
+  characters(page: $page, filter: $filter) {
+    info {
+      count
+      pages
+      next
+    }
+    results {
+      ...CharacterCard
+      species
+      episode {
+        episode
+        air_date
+      }
+    }
+  }
+}
+
+# The same fragment in a second query.
+query CharactersByIds($ids: [ID!]!) {
+  charactersByIds(ids: $ids) {
+    ...CharacterCard
+    location {
+      name
+      residents {
+        id
+      }
+    }
+  }
+}

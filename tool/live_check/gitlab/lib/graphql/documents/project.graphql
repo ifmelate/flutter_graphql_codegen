@@ -1,0 +1,81 @@
+# A fragment on an interface (User), spread on a concrete type (UserCore).
+fragment UserBits on User {
+  username
+  name
+}
+
+fragment IssueBits on Issue {
+  iid
+  title
+  state
+  createdAt
+  webUrl
+  labels(first: 3) {
+    nodes {
+      title
+      color
+    }
+  }
+}
+
+# Relay connection with nodes, edges and pageInfo; an enum variable.
+query ProjectIssues($fullPath: ID!, $first: Int = 3, $state: IssuableState) {
+  project(fullPath: $fullPath) {
+    id
+    name
+    starCount
+    createdAt
+    visibility
+    issues(first: $first, state: $state) {
+      count
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        ...IssueBits
+        author {
+          ...UserBits
+        }
+      }
+      edges {
+        cursor
+        node {
+          iid
+        }
+      }
+    }
+  }
+}
+
+# A union (NoteableType) deep inside. `project` selects `id` like the query
+# above: without it the normalized cache can't read the result back.
+query IssueNotes($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    id
+    issue(iid: $iid) {
+      ...IssueBits
+      notes(first: 3) {
+        nodes {
+          body
+          system
+          author {
+            ...UserBits
+          }
+          discussion {
+            noteable {
+              ... on Issue {
+                iid
+                title
+              }
+              ... on MergeRequest {
+                iid
+                title
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

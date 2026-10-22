@@ -1,0 +1,92 @@
+# An interface field (author: Actor) refined to a concrete type (User).
+fragment IssueCard on Issue {
+  id
+  number
+  title
+  createdAt
+  url
+  author {
+    login
+    ... on User {
+      name
+    }
+  }
+}
+
+# Input objects in arguments, a list of enums with a default, an interface
+# (GitObject) refined to Commit.
+query RepoOverview(
+  $owner: String!
+  $name: String!
+  $issueStates: [IssueState!] = [OPEN]
+) {
+  repository(owner: $owner, name: $name) {
+    id
+    nameWithOwner
+    stargazerCount
+    primaryLanguage {
+      name
+      color
+    }
+    languages(first: 3, orderBy: {field: SIZE, direction: DESC}) {
+      totalSize
+      edges {
+        size
+        node {
+          name
+        }
+      }
+    }
+    issues(
+      first: 3
+      states: $issueStates
+      orderBy: {field: CREATED_AT, direction: DESC}
+    ) {
+      totalCount
+      nodes {
+        ...IssueCard
+      }
+    }
+    defaultBranchRef {
+      name
+      target {
+        oid
+        ... on Commit {
+          messageHeadline
+          committedDate
+        }
+      }
+    }
+  }
+}
+
+# A union (SearchResultItem).
+query SearchRepos($query: String!, $first: Int = 3) {
+  search(query: $query, type: REPOSITORY, first: $first) {
+    repositoryCount
+    nodes {
+      ... on Repository {
+        id
+        nameWithOwner
+        stargazerCount
+      }
+      ... on User {
+        id
+        login
+      }
+    }
+  }
+}
+
+# An interface root field (node: Node).
+query NodeById($id: ID!) {
+  node(id: $id) {
+    id
+    ... on Repository {
+      nameWithOwner
+    }
+    ... on Issue {
+      ...IssueCard
+    }
+  }
+}
