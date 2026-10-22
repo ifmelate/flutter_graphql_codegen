@@ -196,11 +196,12 @@ mutation Rename($id: ID!, $name: String!) { rename(id: $id, name: $name) { id } 
           contains('UsersOperations get users_ =>'));
       expect(output('class_operations.dart'),
           contains('ClassOperations get class_ =>'));
-      // The group class has a `client` field.
+      // The group class has a `client` field. Compared without whitespace:
+      // line breaks depend on the dart_style version.
       expect(
-          output('client_graphql.g.dart'),
-          contains('> client_([\n    Map<String, dynamic>? variables,\n'
-              '  ]) => client.client(variables);'));
+          output('client_graphql.g.dart')!.replaceAll(RegExp(r'\s+'), ''),
+          contains('>client_([Map<String,dynamic>?variables,])=>'
+              'client.client(variables);'));
     });
 
     test('are off by default', () async {
