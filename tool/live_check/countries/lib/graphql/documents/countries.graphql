@@ -1,0 +1,44 @@
+fragment LanguageBits on Language {
+  code
+  name
+  rtl
+}
+
+# A variable with a default used by @include, an alias with an argument.
+query CountryCard($code: ID!, $lang: String, $withStates: Boolean = false) {
+  country(code: $code) {
+    code
+    name
+    localName: name(lang: $lang)
+    emoji
+    capital
+    currencies
+    continent {
+      name
+    }
+    languages {
+      ...LanguageBits
+      native
+    }
+    states @include(if: $withStates) {
+      name
+    }
+  }
+}
+
+# Input filters with nullable list fields (`in`, `nin`), two root fields.
+query FilteredCountries($filter: CountryFilterInput) {
+  countries(filter: $filter) {
+    code
+    name
+    continent {
+      code
+    }
+    languages {
+      ...LanguageBits
+    }
+  }
+  europe: continent(code: "EU") {
+    name
+  }
+}

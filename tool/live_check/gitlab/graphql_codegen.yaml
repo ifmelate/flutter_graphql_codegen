@@ -1,0 +1,8 @@
+# Anonymous access: only public data of gitlab-org/gitlab is read.
+schema_url: lib/graphql/schema.graphql
+schema_endpoint: https://gitlab.com/api/graphql
+output_dir: lib/graphql/generated
+document_paths:
+  - lib/graphql/documents/**/*.graphql
+strict_nullability: true
+unknown_enum_fallback: true

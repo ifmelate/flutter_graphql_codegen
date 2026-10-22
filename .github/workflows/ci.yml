@@ -28,7 +28,9 @@ jobs:
         run: dart pub get
 
       - name: Verify package formatting
-        run: dart format --output=none --set-exit-if-changed .
+        # tool/live_check holds separate packages, formatted for their own
+        # language version.
+        run: dart format --output=none --set-exit-if-changed bin lib test example
 
       - name: Analyze package
         run: dart analyze --fatal-infos

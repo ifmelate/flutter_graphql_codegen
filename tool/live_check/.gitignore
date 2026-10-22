@@ -1,0 +1,6 @@
+# Downloaded schemas and generated code: run.sh recreates them.
+*/lib/graphql/schema.graphql
+*/lib/graphql/generated/
+*/.dart_tool/
+*/pubspec.lock
+*.log
