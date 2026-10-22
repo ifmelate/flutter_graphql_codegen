@@ -2,16 +2,15 @@
 
 Plans, not promises. Order may change; each item ships with tests.
 
-## 3.1 — Flutter and larger projects
-
-- `graphql_flutter` widgets and `flutter_hooks` hooks per operation
-- Several packages in one repository: the schema in a shared package,
-  operations and fragments in feature packages
-- `.nodes` on Relay-style connections (`edges { node }`)
-- Optional grouping of operations: `client.users.getProfile()`
-
 ## Later
 
+- A warning when an operation selects an entity (an object type with an `id`
+  field) without `id`, since the normalized cache can then fail to read the
+  query back
+- `types.dart` limited to the enums, inputs and scalars the operations use;
+  large schemas currently produce a very large `types.dart`
+- Small naming options: how result classes are named, and the name of the
+  `typename` field
 - Fragment data masking (a parent sees only its own fields, not the fields of
   child fragments)
 - Several schemas in one project
