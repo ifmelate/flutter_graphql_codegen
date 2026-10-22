@@ -72,9 +72,16 @@ dev_dependencies:
 result_types: schema
 ```
 
-With `result_types: schema` the generated code is the same as with 2.5.0. What
-still changes:
+With `result_types: schema` the generated code is almost the same as with
+2.5.0. What still changes:
 
+- Since 3.0.1, a nullable list field of an input class starts as `null`, not
+  `[]`, so an unset filter list is left out of the request instead of being
+  sent as "none of these". Code that adds to such a list in place
+  (`filter.tags?.add(x)` or `filter.tags!.add(x)`) must create the list first:
+  `filter.tags = [x]`.
+- Since 3.0.1, a variable with a default value is sent with that default when
+  you don't give it, instead of being left out.
 - `types.dart` has two new top-level functions, `graphqlDeepEquals` and
   `graphqlDeepHash`. Rename your own functions if they have those names and
   you import the generated files without a prefix.
