@@ -50,24 +50,27 @@ void main() {
     // The normalized cache doesn't apply defaults, so a left-out variable
     // used by @include made it expect fields the server didn't send.
     test('are sent with their default when not given', () {
+      // An explicit null (withNulls, copyWith) still replaces the default.
       final code = _op();
-      expect(code, contains("'first': first ?? 3,"));
-      expect(code, contains("'sort': sort == null ? 'NEWEST' :"));
-      expect(code, contains("'full': full ?? false,"));
+      expect(code, contains("'first': first ?? (_firstIsNull ? null : 3),"));
+      expect(code,
+          contains("'sort': sort == null ? (_sortIsNull ? null : 'NEWEST') :"));
+      expect(code, contains("'full': full ?? (_fullIsNull ? null : false),"));
       expect(
           code,
-          contains("'filter': filter == null ? <String, dynamic>{"
-              r"'name': 'it\'s', 'tags': <dynamic>['a'], 'ids': <dynamic>[]}"));
+          contains("'filter': filter == null ? (_filterIsNull ? null : "
+              "<String, dynamic>{'name': 'it\\'s', 'tags': <dynamic>['a'], "
+              "'ids': <dynamic>[]})"));
     });
 
     test('without a default are still left out when null', () {
-      expect(_op(), contains("if (after != null) 'after': after,"));
+      expect(_op(), contains("if (after != null) 'after': after else"));
     });
 
     test('with include_null_inputs too', () {
       CodegenConfigContext.includeNullInputs = true;
       final code = _op();
-      expect(code, contains("'full': full ?? false,"));
+      expect(code, contains("'full': full ?? (_fullIsNull ? null : false),"));
       expect(code, contains("'after': after,"));
     });
   });

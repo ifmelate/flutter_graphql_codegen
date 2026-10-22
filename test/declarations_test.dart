@@ -27,6 +27,7 @@ void main() {
         _op(r'query GetUser($id: ID!) { user(id: $id) { id } }', 'GetUser');
     expect(topLevelDeclarations(code).toSet(), {
       'getUserDocument', 'getUserOperationName', 'GetUserVariables', //
+      'GetUserVariables_CopyWith',
       'parseGetUserData', 'GetUser_User', 'GetUser_User_CopyWith',
       'getUserQueryOptions', 'getUserWatchQueryOptions',
       'GetUserExtension',

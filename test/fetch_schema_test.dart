@@ -98,6 +98,18 @@ document_paths: [lib/**.graphql]
     expect(err.toString(), contains('--output'));
   });
 
+  test('fails when schema_url is a package: URI and there is no --output',
+      () async {
+    final config = writeConfig('''
+schema_url: package:shared/graphql/schema.graphql
+schema_endpoint: $endpoint
+document_paths: [lib/**.graphql]
+''');
+    expect(await run(['--config', config]), 64);
+    expect(err.toString(), allOf(contains('package:'), contains('--output')));
+    expect(requests, isEmpty);
+  });
+
   test('reports download failures', () async {
     status = 500;
     final output = p.join(dir.path, 'schema.graphql');

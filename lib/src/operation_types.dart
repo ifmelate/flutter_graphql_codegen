@@ -13,9 +13,13 @@ import 'package:gql/language.dart' as gql_lang;
 import 'code_utils.dart';
 import 'config_context.dart';
 import 'diagnostics.dart';
+import 'enum_settings.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
 import 'schema_analyzer.dart';
+
+/// The library of this package's fragments, as imported by operation files.
+const localFragmentsLibrary = 'fragments.dart';
 
 /// Classes generated for one operation.
 class OperationClasses {
@@ -25,7 +29,7 @@ class OperationClasses {
     required this.writeType,
     required String Function(String data) parse,
     required String Function(String data) write,
-    required this.usesFragments,
+    required this.libraries,
   })  : _parse = parse,
         _write = write;
 
@@ -39,7 +43,12 @@ class OperationClasses {
   final String writeType;
 
   /// Whether [code] refers to declarations of `fragments.dart`.
-  final bool usesFragments;
+  bool get usesFragments => libraries.contains(localFragmentsLibrary);
+
+  /// Libraries with fragment interfaces [code] implements:
+  /// [localFragmentsLibrary] and the URIs of imported fragments
+  /// (`fragment_imports`), sorted.
+  final List<String> libraries;
 
   final String Function(String data) _parse;
   final String Function(String data) _write;
@@ -57,15 +66,27 @@ class OperationClasses {
 /// [schema] must already be merged with its extensions, and
 /// `SchemaAnalyzer.extractCustomTypesAndEnums` must have run for it.
 class OperationTypes {
+  /// [fragmentLibraries] maps the fragments of [fragments] declared by
+  /// another package (`fragment_imports`) to the URI of their library: their
+  /// interfaces are implemented but not declared again.
   OperationTypes(
-      DocumentNode schema, Map<String, FragmentDefinitionNode> fragments)
+      DocumentNode schema, Map<String, FragmentDefinitionNode> fragments,
+      {Map<String, String> fragmentLibraries = const {}})
       : _ctx = _Context(
           _SchemaInfo(schema),
           fragments,
           legacy: !CodegenConfigContext.strictNullability,
+          libraries: fragmentLibraries,
         );
 
   final _Context _ctx;
+
+  final Set<String> _fragmentFileLibraries = {};
+
+  /// Libraries of imported fragments that the code returned so far by
+  /// [fragmentInterfaces] and [fragmentData] refers to, sorted.
+  List<String> get fragmentFileLibraries =>
+      _fragmentFileLibraries.toList()..sort();
 
   /// Generates the classes for [operation] named [name] whose root type is
   /// [rootType].
@@ -128,15 +149,19 @@ class OperationTypes {
       writeType: writeType,
       parse: parse,
       write: write,
-      usesFragments: emitter.usesFragments,
+      libraries: emitter.libraries.toList()..sort(),
     );
   }
 
-  /// Names of the fragments with generated declarations, sorted.
+  /// Names of the fragments with generated declarations, sorted; imported
+  /// fragments are left out (their package declares them).
   ///
   /// Fragments on introspection types (`__Type`, ...) have none: the
   /// fields selecting them (`__schema`, `__type`) are raw JSON maps.
-  List<String> get fragmentNames => _ctx.declaredFragments;
+  List<String> get fragmentNames => [
+        for (final name in _ctx.declaredFragments)
+          if (!_ctx.libraries.containsKey(name)) name,
+      ];
 
   /// GraphQL type the fragment [name] is on.
   String fragmentType(String name) =>
@@ -146,6 +171,7 @@ class OperationTypes {
   /// interfaces and its type-specific interfaces).
   String fragmentInterfaces(String name) {
     final emitter = _Emitter(_ctx)..tree(_ctx.fragmentInterface(name));
+    _fragmentFileLibraries.addAll(emitter.libraries);
     return emitter.code;
   }
 
@@ -153,6 +179,7 @@ class OperationTypes {
   /// `<Fragment>Data`).
   String fragmentData(String name) {
     final emitter = _Emitter(_ctx)..tree(_ctx.fragmentFile.data[name]!);
+    _fragmentFileLibraries.addAll(emitter.libraries);
     return emitter.code;
   }
 
@@ -307,6 +334,10 @@ class _Shape {
   /// Declared in `fragments.dart`.
   final bool fragment;
 
+  /// URI of the library declaring this shape when it belongs to a fragment
+  /// of another package (`fragment_imports`).
+  String? library;
+
   /// Prefix of the names of nested classes.
   final String path;
 
@@ -324,6 +355,9 @@ class _Shape {
 
   /// `__typename` used when the JSON has none (classes of a concrete type).
   String? typenameFallback;
+
+  /// The Relay-style connection fields behind a `nodes` getter, if any.
+  _Connection? connection;
 
   _Field? field(String key) => fields.where((f) => f.key == key).firstOrNull;
 
@@ -374,6 +408,47 @@ class _Field {
   bool get rawList => type is ListTypeNode;
 }
 
+/// A selected `edges` list whose items select `node` (Relay connections):
+/// the class gets `List<Node> get nodes`.
+///
+/// Matched by response key, so `edges` and `node` must not be aliased to
+/// other names (and a field aliased to `edges` counts). The node must be an
+/// object, interface or union; a class that selects a field named `nodes`
+/// itself gets no getter.
+class _Connection {
+  const _Connection(this.edges, this.node);
+
+  /// The `edges` field of the class.
+  final _Field edges;
+
+  /// The `node` field of the edge class.
+  final _Field node;
+
+  /// Getter name.
+  static const name = 'nodes';
+
+  /// The connection of [shape], whose fields are filled, or null.
+  static _Connection? of(_Shape shape) {
+    if (shape.fields.any((f) => f.dartName == name)) return null;
+    final edges = shape.field('edges');
+    final edgesType = edges?.type;
+    if (edges == null ||
+        edges.kind != _FieldKind.regular ||
+        edgesType is! ListTypeNode ||
+        edgesType.type is ListTypeNode) {
+      return null;
+    }
+    final node = edges.nested?.field('node');
+    if (node == null ||
+        node.kind != _FieldKind.regular ||
+        node.nested == null ||
+        node.type is ListTypeNode) {
+      return null;
+    }
+    return _Connection(edges, node);
+  }
+}
+
 /// Unique class names within one generated file.
 class _Names {
   _Names([Iterable<String> taken = const []]) : _taken = {...taken};
@@ -421,12 +496,16 @@ Set<String> _withConditions(Set<String> base, List<DirectiveNode> directives) {
 
 /// State shared by the builders of one generation run.
 class _Context {
-  _Context(this.schema, this.fragments, {required this.legacy})
+  _Context(this.schema, this.fragments,
+      {required this.legacy, this.libraries = const {}})
       : reserved = _reservedNames();
 
   final _SchemaInfo schema;
   final Map<String, FragmentDefinitionNode> fragments;
   final bool legacy;
+
+  /// Imported fragment name -> URI of the library declaring it.
+  final Map<String, String> libraries;
 
   /// Type names generated code must not declare: built-in names and the
   /// declarations of types.dart (enums, inputs, scalars).
@@ -446,6 +525,8 @@ class _Context {
       names
         ..add(dart)
         ..add('${dart}Converter');
+      // A generated class named like the user type would shadow it.
+      if (EnumSettings.customType(t) case final custom?) names.add(custom);
     }
     names.addAll(TypeRegistry.inputTypes.map(SchemaAnalyzer.dartTypeName));
     return names;
@@ -501,7 +582,18 @@ class _Context {
       doc: 'Fields of the `$name` fragment on `$type`.',
     );
     _building.remove(name);
+    final library = libraries[name];
+    if (library != null) _markLibrary(shape, library);
     return _interfaces[name] = shape;
+  }
+
+  /// Marks [shape] and the shapes declared under it as declared by
+  /// [library].
+  static void _markLibrary(_Shape shape, String library) {
+    shape.library = library;
+    for (final child in shape.children) {
+      _markLibrary(child, library);
+    }
   }
 
   _FragmentFile get fragmentFile => _fragmentFile ??= _FragmentFile(this);
@@ -800,6 +892,10 @@ class _Builder {
     _Field? inherited(String key) =>
         shape.supers.map((s) => s.field(key)).nonNulls.firstOrNull;
 
+    // A supertype's `nodes` getter must be implemented, so a selected field
+    // can't take that name.
+    final inheritsNodes = shape.supers.any((s) => s.connection != null);
+
     if (typename) {
       shape.fields.add(_Field(
         kind: _FieldKind.typename,
@@ -832,7 +928,10 @@ class _Builder {
       String dartName() {
         if (parent != null) return unique(parent.dartName);
         var name = dartFieldName(key, className: shape.name);
-        if (_memberNames.contains(name)) name = '${name}_';
+        if (_memberNames.contains(name) ||
+            (inheritsNodes && name == _Connection.name)) {
+          name = '${name}_';
+        }
         return unique(name);
       }
 
@@ -921,15 +1020,16 @@ class _Builder {
       // `<field>Raw` keeps the server's string next to `$unknown`.
       final rawType =
           def.type is ListTypeNode ? (def.type as ListTypeNode).type : def.type;
-      if (CodegenConfigContext.unknownEnumFallback &&
-          rawType is NamedTypeNode &&
-          TypeRegistry.isEnum(rawType.name.value)) {
+      if (rawType is NamedTypeNode && EnumSettings.hasRaw(rawType.name.value)) {
         field.rawName = parent?.rawName != null
             ? unique(parent!.rawName!)
             : unique(dartFieldName('${key}Raw', className: shape.name));
         field.rawOverrides = parent?.rawName != null;
       }
     }
+    // Interfaces don't declare `nodes`: a class implementing a fragment
+    // would then have to rename its own selected `nodes` field.
+    shape.connection = shape.kind == _Kind.iface ? null : _Connection.of(shape);
   }
 
   static const _typenameDef = FieldDefinitionNode(
@@ -960,7 +1060,11 @@ class _Emitter {
   final _Context ctx;
   final StringBuffer _out = StringBuffer();
   bool _usesUndefined = false;
-  bool usesFragments = false;
+
+  /// Libraries declaring the fragment interfaces the code written so far
+  /// implements, other than the file it is in: [localFragmentsLibrary]
+  /// (from operation files) and those of imported fragments.
+  final Set<String> libraries = {};
 
   /// Marker for copyWith parameters that were not passed.
   static const undefined =
@@ -1038,10 +1142,14 @@ class _Emitter {
   /// string the server sent.
   String _enumToJson(_Field f, String v, String raw) {
     final type = f.type!;
-    final name = SchemaAnalyzer.dartTypeName(_namedType(type));
+    final graphqlName = _namedType(type);
+    final name = SchemaAnalyzer.dartTypeName(graphqlName);
     final converter = 'const ${name}Converter()';
     final unknown = '$name.\$unknown';
     final nullable = f.forced || ctx.legacy || !type.isNonNull;
+    if (EnumSettings.fallback(graphqlName) != null) {
+      return _fallbackEnumToJson(f, v, raw, converter, nullable);
+    }
     if (type is! ListTypeNode) {
       final known = nullable
           ? '$v == null ? null : $converter.toJson($v!)'
@@ -1057,9 +1165,39 @@ class _Emitter {
     return nullable ? '$v == null ? null : $list' : list;
   }
 
+  /// An enum field with a `fallback` value: the string the server sent is
+  /// written back while it still decodes to the field's value (an unknown
+  /// value kept as the fallback), otherwise the value itself.
+  String _fallbackEnumToJson(
+      _Field f, String v, String raw, String converter, bool nullable) {
+    final type = f.type!;
+    if (type is! ListTypeNode) {
+      final known = nullable
+          ? '$v == null ? null : $converter.toJson($v!)'
+          : '$converter.toJson($v)';
+      return '$raw != null && $converter.fromJson($raw!) == $v '
+          '? $raw : $known';
+    }
+    final elementNullable = ctx.legacy || !type.type.isNonNull;
+    final element = elementNullable
+        ? 'e == null ? null : $converter.toJson(e)'
+        : '$converter.toJson(e)';
+    final list = '[for (final (i, e) in ${nullable ? '$v!' : v}.indexed) '
+        '$raw?.elementAtOrNull(i) != null && '
+        '$converter.fromJson($raw![i]!) == e ? $raw![i] : $element]';
+    return nullable ? '$v == null ? null : $list' : list;
+  }
+
   String _implements(_Shape s) {
     if (s.supers.isEmpty) return '';
-    if (!s.fragment && s.supers.any((x) => x.fragment)) usesFragments = true;
+    for (final x in s.supers) {
+      final library = x.library;
+      if (library != null) {
+        if (library != s.library) libraries.add(library);
+      } else if (x.fragment && !s.fragment) {
+        libraries.add(localFragmentsLibrary);
+      }
+    }
     return ' implements ${s.supers.map((x) => x.name).join(', ')}';
   }
 
@@ -1102,8 +1240,12 @@ class _Emitter {
     return reason is StringValueNode ? reason.value : 'No longer supported';
   }
 
-  void _rawDoc(_Field f) => _out.writeln('  /// [${f.dartName}] as the server '
-      'sent it, also when it is `\$unknown`.');
+  void _rawDoc(_Field f) {
+    final fallback = EnumSettings.fallback(_namedType(f.type!));
+    _out.writeln('  /// [${f.dartName}] as the server sent it, '
+        '${fallback == null ? 'also when it is `\$unknown`' : 'also when it '
+            'was decoded as the fallback `$fallback`'}.');
+  }
 
   /// Getters of an interface or sealed class.
   void _getters(_Shape s) {
@@ -1119,8 +1261,46 @@ class _Emitter {
       }
       _out.writeln();
     }
+    _nodes(s, concrete: false);
     if (s.supers.isNotEmpty) _out.writeln('  @override');
     _out.writeln('  Map<String, dynamic> toJson();');
+  }
+
+  /// `nodes` getter of a class with a Relay-style connection (abstract
+  /// unless [concrete]).
+  void _nodes(_Shape s, {required bool concrete}) {
+    final c = s.connection;
+    if (c == null) return;
+    final node = c.node.nested!.name;
+    _out.writeln('  /// The `node` of each of [${c.edges.dartName}], '
+        'leaving out null edges and nodes.');
+    if (s.supers.any((x) => x.connection != null)) {
+      _out.writeln('  @override');
+    }
+    if (!concrete) {
+      _out
+        ..writeln('  List<$node> get ${_Connection.name};')
+        ..writeln();
+      return;
+    }
+    final edges = c.edges.dartName;
+    final nodeName = c.node.dartName;
+    final edgeNullable =
+        ctx.legacy || !(c.edges.type as ListTypeNode).type.isNonNull;
+    final nodeNullable = dartType(c.node).endsWith('?');
+    final source =
+        dartType(c.edges).endsWith('?') ? '$edges ?? const []' : edges;
+    final element = switch ((edgeNullable, nodeNullable)) {
+      (true, true) => 'if (edge?.$nodeName case final node?) node',
+      (true, false) => 'if (edge != null) edge.$nodeName',
+      (false, true) => 'if (edge.$nodeName case final node?) node',
+      (false, false) => 'edge.$nodeName',
+    };
+    _out
+      ..writeln('  List<$node> get ${_Connection.name} => [')
+      ..writeln('        for (final edge in $source) $element,')
+      ..writeln('      ];')
+      ..writeln();
   }
 
   void _iface(_Shape s) {
@@ -1218,6 +1398,7 @@ class _Emitter {
         ..writeln('  final $type $dart;')
         ..writeln();
     }
+    _nodes(s, concrete: true);
 
     // toJson.
     if (s.supers.isNotEmpty) _out.writeln('  @override');
