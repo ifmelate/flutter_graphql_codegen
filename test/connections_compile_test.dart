@@ -94,8 +94,12 @@ void check(bool condition, String message) {
   if (!condition) throw StateError('Check failed: \$message');
 }
 
-/// Works for the connection of any operation spreading the fragment.
-List<String> names(UserList list) => [for (final u in list.nodes) u.name$bang];
+/// Works for the connection of any operation spreading the fragment; the
+/// interface has edges, not `nodes`.
+List<String> names(UserList list) => [
+      for (final e in list.edges ?? const <UserList_Edges?>[])
+        if (e?.node case final u?) u.name$bang,
+    ];
 
 void main() {
   const ann = {'__typename': 'User', 'id': '1', 'name': 'Ann'};
@@ -133,9 +137,12 @@ void main() {
   final list = parseUsersListData({
     'users': {'__typename': 'UserConnection', 'edges': edges},
   })$bang;
-  check(names(list).join(',') == 'Ann,Bob', 'nodes through the fragment');
+  check(names(list).join(',') == 'Ann,Bob', 'edges through the fragment');
+  check(list.nodes.map((u) => u.name).join(',') == 'Ann,Bob',
+      'nodes of the operation class');
   final data = UserListData.fromJson(list.toJson());
-  check(names(data).join(',') == 'Ann,Bob', 'nodes of the data class');
+  check(data.nodes.map((u) => u.name).join(',') == 'Ann,Bob',
+      'nodes of the data class');
 
   // An interface as node type: a list of the sealed class.
   final search = parseSearchData({

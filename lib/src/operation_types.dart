@@ -1027,7 +1027,9 @@ class _Builder {
         field.rawOverrides = parent?.rawName != null;
       }
     }
-    shape.connection = _Connection.of(shape);
+    // Interfaces don't declare `nodes`: a class implementing a fragment
+    // would then have to rename its own selected `nodes` field.
+    shape.connection = shape.kind == _Kind.iface ? null : _Connection.of(shape);
   }
 
   static const _typenameDef = FieldDefinitionNode(

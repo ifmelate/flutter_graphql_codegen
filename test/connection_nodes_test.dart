@@ -125,15 +125,14 @@ void main() {
         isNot(contains('get nodes')));
   });
 
-  test('fragment interfaces and data classes get it too', () {
+  test('fragment data classes get it, fragment interfaces do not', () {
     const fragment =
         'fragment UserList on UserConnection { edges { node { id } } }';
     final fragments = _fragments(fragment);
-    expect(_class(fragments, 'UserList'),
-        contains('List<UserList_Edges_Node> get nodes;'));
+    expect(_class(fragments, 'UserList'), isNot(contains('get nodes')));
     final data = _class(fragments, 'UserListData');
-    expect(
-        data, contains('@override\n  List<UserListData_Edges_Node> get nodes'));
+    expect(data, contains('  List<UserListData_Edges_Node> get nodes => ['));
+    expect(data, isNot(contains('@override\n  List<UserListData_Edges_Node>')));
 
     final code = _op(
         'query Users { users { ...UserList pageInfo { '
@@ -141,19 +140,21 @@ void main() {
         'Users',
         fragments: fragment);
     expect(_class(code, 'Users_Users'),
-        contains('@override\n  List<Users_Users_Edges_Node> get nodes => ['));
+        contains('  List<Users_Users_Edges_Node> get nodes => ['));
   });
 
-  test('a field named nodes next to an inherited getter is renamed', () {
+  test('a selected field named nodes keeps its name next to a fragment', () {
+    // Interfaces don't declare `nodes`, so spreading a fragment with a
+    // connection never renames a field of the operation.
     const fragment =
         'fragment UserList on UserConnection { edges { node { id } } }';
     final code = _op(
         'query Users { users { ...UserList nodes { id } } }', 'Users',
         fragments: fragment);
     final users = _class(code, 'Users_Users');
-    expect(users, contains('final List<Users_Users_Nodes?>? nodes_;'));
-    expect(users, contains("'nodes': nodes_"));
-    expect(users, contains('List<Users_Users_Edges_Node> get nodes => ['));
+    expect(users, contains('final List<Users_Users_Nodes?>? nodes;'));
+    expect(users, contains("'nodes': nodes"));
+    expect(users, isNot(contains('get nodes =>')));
   });
 
   test('sealed classes declare it, their subclasses implement it', () {
