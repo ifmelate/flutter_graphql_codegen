@@ -1,4 +1,46 @@
-# Migrating from 2.x to 3.0
+# Migration
+
+- [3.0 to 3.1](#migrating-from-30-to-31)
+- [2.x to 3.0](#migrating-from-2x-to-30)
+
+## Migrating from 3.0 to 3.1
+
+3.1 adds options that are all off by default, so most projects only bump the
+version. Three things behave differently:
+
+**Input `copyWith(x: null)` now sends `null`.** In 3.0 it set the field to
+null, and `toJson()` then left it out, so the server kept its value. Now the
+field is sent as `null`, which servers read as "clear it". If you used
+`copyWith(x: null)` to mean "don't send x", build the input without it
+instead:
+
+```dart
+// 3.0: email left out; 3.1: email sent as null
+final patch = current.copyWith(email: null);
+
+// leave email out in 3.1
+final patch = UserPatch(name: current.name, tags: current.tags);
+```
+
+**Input `fromJson` keeps explicit nulls.** A key holding `null`
+(`{'email': null}`) becomes an explicit `null` that `toJson()` sends again; a
+missing key stays absent. In 3.0 both were left out. This matters if you
+build inputs from stored or user-provided JSON: drop the null keys first if
+you don't want them sent. Such an input is also no longer `==` to one built
+without the key.
+
+**Variables classes compare by value.** `GetUserVariables(id: '1') ==
+GetUserVariables(id: '1')` is now true. Code that relied on identity (keeping
+two equal variables apart in a `Set` or as map keys) needs another key.
+
+`<op>QueryOptions` has two new optional parameters, `onComplete` and
+`onError`; existing calls compile unchanged. With `include_null_inputs: true`
+nothing changes for inputs, since every null was sent already.
+
+To use the Flutter widgets and hooks, add `graphql_flutter: ^5.2.0` (which
+needs `graphql: ^5.2.0`); see the README.
+
+## Migrating from 2.x to 3.0
 
 3.0 changes what results look like. In 2.x a query returned the classes of the
 schema types (`User`, `Post`), with every field of the type, so a query that
@@ -16,7 +58,7 @@ There are two ways to upgrade:
 Both need Dart language 3.0 or newer in your package (`environment: sdk:
 ^3.0.0` or higher). The generator itself already required Dart 3.4 in 2.x.
 
-## Quick path: keep the 2.x classes
+### Quick path: keep the 2.x classes
 
 ```yaml
 # pubspec.yaml
@@ -50,13 +92,13 @@ still changes:
 
 That's all. You can do the full path later.
 
-## Full path: per-operation result classes
+### Full path: per-operation result classes
 
 Remove `result_types` from the config (or set it to `operation`, the default),
 then go through the steps below. `result_types` applies to the whole build, so
 all operations switch at once; the compiler shows you every place to change.
 
-### 1. Dependencies and build
+#### 1. Dependencies and build
 
 `json_serializable` is no longer used. Remove it from `dev_dependencies` unless
 your own code needs it, and delete the old `types.g.dart` from `output_dir`.
@@ -75,7 +117,7 @@ dev_dependencies:
 
 One `build_runner build` is now enough, also on a fresh checkout.
 
-### 2. Result types
+#### 2. Result types
 
 `types.dart` no longer has classes for object types, interfaces and unions.
 Results use classes named after the operation and the path of response keys:
@@ -101,7 +143,7 @@ query. Fields under `@skip`/`@include` are now nullable.
 Every class has a `const` constructor, `final` fields, `fromJson`, `toJson`,
 deep `==`/`hashCode` and `copyWith`. A non-root class also has `typename`.
 
-### 3. Code shared between operations: use fragments
+#### 3. Code shared between operations: use fragments
 
 In 2.x, a widget or function could take a `User` from any query. In 3.0, each
 query has its own class, so put the fields the shared code needs into a
@@ -130,7 +172,7 @@ input type gets a trailing underscore (`Role_`).
 To build a fragment's data by hand, for tests or previews, use
 `<Fragment>Data`: `const UserCardData(typename: 'User', id: '1', name: 'Ann')`.
 
-### 4. Interfaces and unions
+#### 4. Interfaces and unions
 
 Abstract classes with `Unknown<Name>` fallbacks become sealed classes with one
 subclass per type the selection has fields for, and `_Other` for the rest:
@@ -161,7 +203,7 @@ The `switch` is exhaustive without a `default`. Types without fields of their
 own in the selection also end up in `_Other`, and `typename` is non-null there.
 Keep passing `possibleTypes` to `GraphQLCache`.
 
-### 5. Writing to the cache
+#### 5. Writing to the cache
 
 `write<Op>` takes the typed result instead of a raw map, and adds `__typename`
 itself:
@@ -192,7 +234,7 @@ Fragments can now be read and written per object with
 `client.read<Fragment>Fragment(idFields)` and
 `client.write<Fragment>Fragment(idFields, data)`; see the README.
 
-### 6. Input types
+#### 6. Input types
 
 Input classes in `types.dart` are now immutable: a `const` constructor and
 `final` fields, plus `==`/`hashCode` and `copyWith`. Constructor calls don't
@@ -211,7 +253,7 @@ final everyone = admins.copyWith(role: null);   // null clears a field
 
 `toJson()` sends the same JSON as before, including with `include_null_inputs`.
 
-### 7. `unknown_enum_fallback`
+#### 7. `unknown_enum_fallback`
 
 If you use it:
 
@@ -222,7 +264,7 @@ If you use it:
   `toJson()`, like a single `$unknown` value already did. In 2.x lists weren't
   checked. (With `result_types: schema` they still aren't.)
 
-### Checklist
+#### Checklist
 
 - [ ] `flutter_graphql_codegen: ^3.0.0`, Dart language 3.0+
 - [ ] `json_serializable` removed (or `result_types: schema` set)
