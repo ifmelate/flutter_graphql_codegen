@@ -1274,6 +1274,9 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   CodegenConfigContext.groupOperations = cfg.groupOperations;
   CodegenConfigContext.typesImport = cfg.typesImport;
   CodegenConfigContext.pruneTypes = cfg.pruneTypes;
+  CodegenConfigContext.fragmentMasking = cfg.fragmentMasking;
+  CodegenConfigContext.persistedDocumentsAlgorithm =
+      cfg.persistedDocuments?.algorithm;
   CodegenConfigContext.fragmentImports = List.of(cfg.fragmentImports);
   CodegenConfigContext.scalarImports = Map.of(cfg.scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(cfg.scalarConverters);
