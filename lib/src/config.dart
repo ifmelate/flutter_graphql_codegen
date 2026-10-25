@@ -418,6 +418,18 @@ class GraphQLCodegenConfig {
       }
       final persistedDocuments = PersistedDocumentsConfig.fromYaml(
           yamlMap['persisted_documents'], outputDir, mappingWarnings);
+      // Its files would be read as documents and generate the operations
+      // again.
+      final directory = persistedDocuments?.directory;
+      if (directory != null &&
+          documentPaths.any((pattern) => Glob('$pattern').matches(
+              '${directory.replaceAll(RegExp(r'/+$'), '')}/x.graphql'))) {
+        throw CodegenException(
+          CodegenErrorCodes.cfgInvalid,
+          'persisted_documents directory "$directory" is matched by '
+          'document_paths; choose a directory outside of them',
+        );
+      }
 
       // Enums: `Enum: {type, import, from_json, to_json, fallback}`.
       const enumKeys = {'type', 'import', 'from_json', 'to_json', 'fallback'};

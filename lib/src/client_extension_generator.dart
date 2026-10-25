@@ -15,6 +15,7 @@ import 'json_exprs.dart';
 import 'naming.dart';
 import 'operation_groups.dart';
 import 'operation_types.dart';
+import 'persisted_documents.dart';
 import 'schema_analyzer.dart';
 import 'type_generator.dart';
 
@@ -298,8 +299,7 @@ ${request(writeIdFields)},
       fragmentLibraries: fragmentLibraries,
     );
 
-    final document = gql_lang.printNode(
-        DocumentUtils.buildOperationDocument(operation, allFragments));
+    final document = operationDocumentText(operation, allFragments);
 
     final buffer = StringBuffer()
       ..writeln('/// GraphQL document for the `$operationName` '
@@ -310,6 +310,15 @@ ${request(writeIdFields)},
       ..writeln("const String ${context.camel}OperationName = "
           "'$operationName';")
       ..writeln();
+    final algorithm = CodegenConfigContext.persistedDocumentsAlgorithm;
+    if (algorithm != null) {
+      buffer
+        ..writeln('/// Id of [${context.camel}Document] in the persisted '
+            'documents manifest.')
+        ..writeln("const String ${context.camel}DocumentId = "
+            "'${persistedDocumentId(persistedDocumentText(document), algorithm)}';")
+        ..writeln();
+    }
 
     final variables = _generateVariablesClass(context);
     if (variables.isNotEmpty) buffer.writeln(variables);
@@ -337,6 +346,13 @@ ${request(writeIdFields)},
     }
     return (buffer.toString(), classes?.libraries ?? const <String>[]);
   }
+
+  /// The text of [operation]'s document, with the fragments of [fragments]
+  /// it uses, as the generated code embeds it.
+  static String operationDocumentText(OperationDefinitionNode operation,
+          Map<String, FragmentDefinitionNode> fragments) =>
+      gql_lang.printNode(
+          DocumentUtils.buildOperationDocument(operation, fragments));
 
   static OperationDefinitionNode _findOperation(
       DocumentNode doc, String operationName) {
