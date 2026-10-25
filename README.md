@@ -41,7 +41,7 @@ dependencies:
   json_annotation: ^4.8.1
 
 dev_dependencies:
-  flutter_graphql_codegen: ^3.2.0
+  flutter_graphql_codegen: ^3.3.0
   build_runner: ^2.4.6
 ```
 

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.3.0] - 2026-10-25
 
 ### Added
 - `fragment_masking: true` keeps the fields of a spread fragment off the
@@ -25,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file system storage). `persisted_documents.dart` has
   `PersistedDocumentsSerializer` for `HttpLink`, which sends the id instead
   of the document, as `extensions.persistedQuery` (Apollo), `documentId` or
-  `id`
+  `id`. Checked against Hot Chocolate 15.0.3 with only persisted documents
+  allowed: queries and mutations run by id, documents sent as text are
+  refused
 
 ## [3.2.0] - 2026-10-25
 
