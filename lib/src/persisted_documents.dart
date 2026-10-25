@@ -57,14 +57,15 @@ ${names.map((n) => "  '$n': '${ids[n]}',").join('\n')}
 /// Where a [PersistedDocumentsSerializer] puts the document id.
 enum PersistedDocumentFormat {
   /// `extensions.persistedQuery.sha256Hash`, as Apollo's persisted queries
-  /// (Apollo Router, GraphQL Hive, graphql-java and others).
+  /// (Apollo Router, GraphQL Hive, graphql-java, Hot Chocolate with a
+  /// SHA-256 hash provider).
   apollo,
 
   /// A top-level `documentId`, as in the GraphQL over HTTP persisted
   /// documents proposal (GraphQL Hive).
   documentId,
 
-  /// A top-level `id` (Hot Chocolate).
+  /// A top-level `id` (Hot Chocolate, with any hash provider).
   id,
 }
 

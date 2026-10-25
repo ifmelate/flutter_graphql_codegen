@@ -691,6 +691,9 @@ prune_types: true
 - A type no operation uses isn't declared, so code of yours that uses it
   directly (an enum in a widget, say) stops compiling. Select it in some
   operation, or leave the option off.
+- It applies to `result_types: operation` only. Don't turn it on in a package
+  whose `types.dart` other packages use through `types_import`: it only knows
+  its own operations.
 
 ## Persisted documents
 
@@ -733,22 +736,35 @@ final link = HttpLink(
 
 | `format` | Request | Servers |
 |----------|---------|---------|
-| `PersistedDocumentFormat.apollo` (default) | `extensions.persistedQuery.sha256Hash` | Apollo Router, GraphQL Hive, graphql-java and others |
+| `PersistedDocumentFormat.apollo` (default) | `extensions.persistedQuery.sha256Hash` | Apollo Router, GraphQL Hive, graphql-java, Hot Chocolate with a SHA-256 hash provider |
 | `PersistedDocumentFormat.documentId` | top-level `documentId` | GraphQL Hive, servers following the GraphQL over HTTP proposal |
-| `PersistedDocumentFormat.id` | top-level `id` | Hot Chocolate |
+| `PersistedDocumentFormat.id` | top-level `id` | Hot Chocolate, with any hash provider |
 
 - `sendDocument: true` sends the document as well, for servers that register
-  documents on first use (automatic persisted queries).
+  documents on first use (automatic persisted queries). A server that only
+  runs persisted documents may refuse such requests: Hot Chocolate does.
 - Operations without an id (documents you build by hand) are sent as usual.
-- The id must be computed the way your server computes it, if it checks:
-  Apollo's format means SHA-256, and Hot Chocolate hashes with MD5 in Base64
-  unless configured otherwise (for example
-  `AddSha256DocumentHashProvider(HashFormat.Hex)`).
 - `WebSocketLink` takes a `serializer` in its `SocketClientConfig` too, if your
   server accepts ids for subscriptions.
-- It applies to `result_types: operation` only. Don't turn it on in a package
-  whose `types.dart` other packages use through `types_import`: it only knows
-  its own operations.
+
+With Hot Chocolate (checked on 15.0.3), put the ids in `directory:` and point
+its file system storage there:
+
+```csharp
+builder.Services.AddSha256DocumentHashProvider(HashFormat.Hex);
+builder.Services
+    .AddGraphQLServer()
+    // ...
+    .AddFileSystemOperationDocumentStorage("./persisted_operations")
+    .UsePersistedOperationPipeline()
+    .ModifyRequestOptions(o =>
+        o.PersistedOperations.OnlyAllowPersistedDocuments = true);
+```
+
+The `id` format works with any hash provider, since the server looks the id
+up as a file name. The default `apollo` format needs the SHA-256 provider in
+hex, as above: Hot Chocolate reads `extensions.persistedQuery` only then. It
+doesn't read `documentId`.
 
 ## Custom scalars
 
