@@ -6,16 +6,37 @@ import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 
 import 'client_extension_generator.dart';
+import 'document_utils.dart';
 import 'operation_analyzer.dart';
 import 'type_generator.dart';
+import 'type_usage.dart';
 
 /// Main GraphQL code generator class
 ///
 /// This class provides the public API for generating GraphQL-related code.
 class GraphQLCodeGenerator {
-  /// Generates a complete types file with all necessary components
-  static String generateTypesFile(String schema) {
-    return TypeGenerator.generateTypesFile(schema);
+  /// Generates a complete types file with all necessary components.
+  ///
+  /// With [only] (see [usedTypes]), enums, input types, custom scalars and
+  /// `possibleTypes` entries are limited to those schema types (operation
+  /// result types only).
+  static String generateTypesFile(String schema, {Set<String>? only}) {
+    return TypeGenerator.generateTypesFile(schema, only: only);
+  }
+
+  /// The schema types that the operations and fragments of [documents]
+  /// use, for `generateTypesFile(only: ...)` (what `prune_types` does in the
+  /// builder).
+  static Set<String> usedTypes(String schema, Iterable<String> documents) {
+    final docs = documents.map(gql_lang.parseString).toList();
+    return TypeUsage.collect(
+      gql_lang.parseString(schema),
+      [
+        for (final doc in docs)
+          ...doc.definitions.whereType<OperationDefinitionNode>(),
+      ],
+      DocumentUtils.collectFragments(docs),
+    );
   }
 
   /// Generates an operation file.

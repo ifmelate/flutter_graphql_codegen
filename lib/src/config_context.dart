@@ -41,6 +41,9 @@ class CodegenConfigContext {
   /// See `GraphQLCodegenConfig.fragmentImports`.
   static List<FragmentImport> fragmentImports = <FragmentImport>[];
 
+  /// See `GraphQLCodegenConfig.pruneTypes`.
+  static bool pruneTypes = false;
+
   /// Resets all fields to defaults. Useful for tests and watch-mode rebuilds.
   static void reset() {
     fileNaming = 'snake_case';
@@ -62,5 +65,6 @@ class CodegenConfigContext {
     groupOperations = 'none';
     typesImport = null;
     fragmentImports = <FragmentImport>[];
+    pruneTypes = false;
   }
 }

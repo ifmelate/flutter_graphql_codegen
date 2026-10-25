@@ -36,8 +36,12 @@ _Field _inputFieldOf(InputValueDefinitionNode f) => (
 
 /// Utility class for generating types, enums, and converters
 class TypeGenerator {
-  /// Generates a complete types file with all necessary components
-  static String generateTypesFile(String schema) {
+  /// Generates a complete types file with all necessary components.
+  ///
+  /// With [only] (`prune_types`, operation result types only), enums, input
+  /// types, custom scalars and `possibleTypes` entries are limited to the
+  /// schema types named there (see `TypeUsage.collect`).
+  static String generateTypesFile(String schema, {Set<String>? only}) {
     final schemaDoc =
         DocumentUtils.mergeSchemaExtensions(gql_lang.parseString(schema));
     _checkStructure(schemaDoc);
@@ -46,7 +50,8 @@ class TypeGenerator {
     _checkStrictScalars();
     _nullableConverters.clear();
     _usesEnumRaw = false;
-    final needsConvert = _wrappedScalars(TypeRegistry.customScalars).isNotEmpty;
+    _only = CodegenConfigContext.operationResultTypes ? only : null;
+    final needsConvert = _wrappedScalars(TypeRegistry.customScalars).any(_keep);
     final scalarConverters =
         _generateScalarConverters(TypeRegistry.customScalars);
     final enumDefinitions = _generateEnumDefinitions(schemaDoc);
@@ -417,13 +422,19 @@ ${_generateNullableConverters()}${_usesEnumRaw ? _enumRawHelper : ''}''';
     );
   }
 
+  /// Schema types to declare (`prune_types`); null declares all of them.
+  static Set<String>? _only;
+
+  /// Whether schema type [name] is declared in this types file.
+  static bool _keep(String name) => _only?.contains(name) ?? true;
+
   /// The concrete object types of every interface and union, in the shape
   /// `GraphQLCache(possibleTypes: ...)` expects for matching fragments.
   static String _generatePossibleTypes() {
     final abstractTypes = {
       ...TypeRegistry.interfaceTypes,
       ...TypeRegistry.unionTypes,
-    }.toList()
+    }.where(_keep).toList()
       ..sort();
     final buffer = StringBuffer()
       ..writeln('/// Concrete types of every interface and union, for '
@@ -451,7 +462,7 @@ ${_generateNullableConverters()}${_usesEnumRaw ? _enumRawHelper : ''}''';
   static String _generateScalarConverters(Set<String> customScalars) {
     final buffer = StringBuffer();
 
-    for (final scalar in _wrappedScalars(customScalars)) {
+    for (final scalar in _wrappedScalars(customScalars).where(_keep)) {
       final name = SchemaAnalyzer.dartTypeName(scalar);
       buffer.writeln('''
 /// Wrapper for the custom GraphQL scalar `$scalar`.
@@ -494,6 +505,7 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
 
     for (final definition in _sortedDefinitions(schemaDoc)) {
       if (definition is EnumTypeDefinitionNode &&
+          _keep(definition.name.value) &&
           !EnumSettings.isCustom(definition.name.value)) {
         final enumName = SchemaAnalyzer.dartTypeName(definition.name.value);
         buffer.write(_docComment(definition.description));
@@ -530,7 +542,8 @@ class ${name}Converter implements JsonConverter<$name, dynamic> {
     final buffer = StringBuffer();
 
     for (final definition in _sortedDefinitions(schemaDoc)) {
-      if (definition is EnumTypeDefinitionNode) {
+      if (definition is EnumTypeDefinitionNode &&
+          _keep(definition.name.value)) {
         final graphqlName = definition.name.value;
         final enumName = SchemaAnalyzer.dartTypeName(graphqlName);
         final config = CodegenConfigContext.enumConfigs[graphqlName];
@@ -633,6 +646,7 @@ class ${enumName}Converter extends JsonConverter<$type, String> {
     if (CodegenConfigContext.operationResultTypes) {
       final inputs = _sortedDefinitions(schemaDoc)
           .whereType<InputObjectTypeDefinitionNode>()
+          .where((d) => _keep(d.name.value))
           .toList();
       for (final definition in inputs) {
         buffer.writeln(_generateInputClass(definition));
