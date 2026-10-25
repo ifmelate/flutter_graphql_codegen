@@ -44,6 +44,13 @@ class CodegenConfigContext {
   /// See `GraphQLCodegenConfig.pruneTypes`.
   static bool pruneTypes = false;
 
+  /// See `GraphQLCodegenConfig.fragmentMasking`.
+  static bool fragmentMasking = false;
+
+  /// Hash function of persisted document ids, or null when
+  /// `persisted_documents` is off.
+  static String? persistedDocumentsAlgorithm;
+
   /// Resets all fields to defaults. Useful for tests and watch-mode rebuilds.
   static void reset() {
     fileNaming = 'snake_case';
@@ -66,5 +73,7 @@ class CodegenConfigContext {
     typesImport = null;
     fragmentImports = <FragmentImport>[];
     pruneTypes = false;
+    fragmentMasking = false;
+    persistedDocumentsAlgorithm = null;
   }
 }

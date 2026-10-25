@@ -110,7 +110,11 @@ class OperationTypes {
 
     final emitter = _Emitter(_ctx);
     final fields = root.fields;
-    if (fields.length > 1) {
+    // A single field is returned as is, unless it is a masked fragment,
+    // which is parsed from the whole `data` object.
+    final wrapped =
+        fields.length > 1 || fields.any((f) => f.kind == _FieldKind.fragment);
+    if (wrapped) {
       emitter.tree(root);
     } else {
       for (final child in root.children) {
@@ -128,7 +132,7 @@ class OperationTypes {
       writeType = 'Map<String, dynamic>';
       parse = (data) => data;
       write = (data) => data;
-    } else if (fields.length == 1) {
+    } else if (!wrapped) {
       final f = fields.single;
       returnType = emitter.dartType(f);
       writeType = returnType;
@@ -180,8 +184,13 @@ class OperationTypes {
   String fragmentData(String name) {
     final emitter = _Emitter(_ctx)..tree(_ctx.fragmentFile.data[name]!);
     _fragmentFileLibraries.addAll(emitter.libraries);
+    _usesMergeJson |= emitter.usesMergeJson;
     return emitter.code;
   }
+
+  /// Whether the code returned so far by [fragmentData] merges the JSON of
+  /// masked fragments.
+  bool _usesMergeJson = false;
 
   /// Dart name of the data class of fragment [name].
   String fragmentDataClass(String name) => _ctx.fragmentFile.data[name]!.name;
@@ -190,9 +199,12 @@ class OperationTypes {
   String fragmentInterfaceName(String name) =>
       _ctx.fragmentInterface(name).name;
 
-  /// Shared declarations every file with data classes needs, or ''.
-  String get support =>
-      _ctx.fragmentFile.data.isEmpty ? '' : _Emitter.undefined;
+  /// Shared declarations the code returned so far by [fragmentData] needs,
+  /// or ''.
+  String get support => [
+        if (_ctx.fragmentFile.data.isNotEmpty) _Emitter.undefined,
+        if (_usesMergeJson) _Emitter.mergeJson,
+      ].join('\n');
 
   /// Validates all fragments and returns the names declared for them;
   /// throws when two fragments would declare the same name.
@@ -312,6 +324,10 @@ enum _FieldKind {
   /// Not in the schema (only with `validate_documents: false`): raw JSON.
   untyped,
   regular,
+
+  /// The data of a masked fragment spread (`fragment_masking`), parsed from
+  /// the same JSON object as the class.
+  fragment,
 }
 
 /// A generated class or interface.
@@ -367,7 +383,8 @@ class _Shape {
   /// Shapes declared after this one, in declaration order.
   Iterable<_Shape> get children sync* {
     for (final f in fields) {
-      if (f.nested != null) yield f.nested!;
+      // A masked fragment's interface is declared with the fragment.
+      if (f.nested != null && f.kind != _FieldKind.fragment) yield f.nested!;
     }
     yield* variants.values;
     if (other != null) yield other!;
@@ -384,11 +401,13 @@ class _Field {
     this.nested,
     this.def,
     this.overrides = false,
+    this.fragment,
   });
 
   final _FieldKind kind;
 
-  /// Response key (alias or field name).
+  /// Response key (alias or field name); `...Name` for masked fragment
+  /// [fragment].
   final String key;
   final String dartName;
 
@@ -397,7 +416,13 @@ class _Field {
 
   /// Nullable because of `@skip` / `@include`.
   final bool forced;
+
+  /// Class of the selected fields; the fragment interface (or its
+  /// type-specific interface) of a masked fragment.
   final _Shape? nested;
+
+  /// Name of the masked fragment (fragment fields only).
+  final String? fragment;
   final FieldDefinitionNode? def;
   final bool overrides;
 
@@ -652,7 +677,8 @@ class _FragmentFile {
       final type = def.typeCondition.on.name.value;
       final spread = SelectionSetNode(
           selections: [FragmentSpreadNode(name: NameNode(value: f))]);
-      final shape = _Builder(ctx, names, fragmentFile: true).group(
+      final shape =
+          _Builder(ctx, names, fragmentFile: true, unmaskedRoot: f).group(
         '${ctx.fragmentClassName(f)}Data',
         type,
         [_Sel(spread, type)],
@@ -674,13 +700,30 @@ class _FragmentFile {
 }
 
 class _Builder {
-  _Builder(this.ctx, this.names, {required this.fragmentFile});
+  _Builder(this.ctx, this.names,
+      {required this.fragmentFile, this.unmaskedRoot});
 
   final _Context ctx;
   final _Names names;
   final bool fragmentFile;
 
+  /// Fragment whose top-level spread is not masked: the one a data class
+  /// is built for.
+  final String? unmaskedRoot;
+
   _SchemaInfo get schema => ctx.schema;
+
+  /// Whether the spread of fragment [name] under [conditions] (`@skip` /
+  /// `@include`) is masked; [active] are the fragments being walked.
+  ///
+  /// Conditional spreads stay unmasked: whether the fragment was included
+  /// can't be told from the response. So do fragments of other packages
+  /// (`fragment_imports`), whose interfaces are declared there.
+  bool _masked(String name, Set<String> conditions, Set<String> active) =>
+      CodegenConfigContext.fragmentMasking &&
+      conditions.isEmpty &&
+      !ctx.libraries.containsKey(name) &&
+      !(name == unmaskedRoot && active.isEmpty);
 
   /// The class of an operation's `data` (no `__typename`).
   _Shape root(String name, String path, String type, SelectionSetNode set,
@@ -780,9 +823,12 @@ class _Builder {
         String? condition;
         SelectionSetNode set;
         var nextActive = active;
+        var masked = false;
+        final Set<String> conditions;
         if (node is InlineFragmentNode) {
           condition = node.typeCondition?.on.name.value;
           set = node.selectionSet;
+          conditions = _withConditions(sel.conditions, node.directives);
         } else if (node is FragmentSpreadNode) {
           final name = node.name.value;
           if (active.contains(name)) continue;
@@ -790,12 +836,16 @@ class _Builder {
           condition = def.typeCondition.on.name.value;
           set = def.selectionSet;
           nextActive = {...active, name};
+          conditions = _withConditions(sel.conditions, node.directives);
+          masked = _masked(name, conditions, active);
         } else {
           continue;
         }
         if (schema.coversAll(condition, type)) {
-          if (_hasSpecific([_Sel(set, condition ?? sel.scope)], type, concrete,
-              nextActive)) {
+          // A masked fragment's own type-specific fields stay in its data.
+          if (!masked &&
+              _hasSpecific([_Sel(set, condition ?? sel.scope, conditions)],
+                  type, concrete, nextActive)) {
             return true;
           }
         } else if (schema.applies(condition, concrete)) {
@@ -807,12 +857,14 @@ class _Builder {
   }
 
   /// Visits the fields of [sels] (through fragments [include] accepts) and
-  /// the fragment spreads on the way.
+  /// the fragment spreads on the way; masked fragments go to [onMasked]
+  /// without visiting their fields.
   void _walk(
     List<_Sel> sels,
     bool Function(String? condition) include,
     void Function(_Occurrence) onField,
-    void Function(String fragment, Set<String> conditions) onSpread, [
+    void Function(String fragment, Set<String> conditions) onSpread,
+    void Function(String fragment) onMasked, [
     Set<String> active = const {},
   ]) {
     for (final sel in sels) {
@@ -826,7 +878,7 @@ class _Builder {
           _walk([
             _Sel(node.selectionSet, condition ?? sel.scope,
                 _withConditions(sel.conditions, node.directives)),
-          ], include, onField, onSpread, active);
+          ], include, onField, onSpread, onMasked, active);
         } else if (node is FragmentSpreadNode) {
           final name = node.name.value;
           final def = ctx.fragment(name);
@@ -839,9 +891,13 @@ class _Builder {
             );
           }
           final conditions = _withConditions(sel.conditions, node.directives);
+          if (_masked(name, conditions, active)) {
+            onMasked(name);
+            continue;
+          }
           onSpread(name, conditions);
           _walk([_Sel(def.selectionSet, condition, conditions)], include,
-              onField, onSpread, {...active, name});
+              onField, onSpread, onMasked, {...active, name});
         }
       }
     }
@@ -858,6 +914,7 @@ class _Builder {
   }) {
     final occurrences = <String, List<_Occurrence>>{};
     final spreads = <String>[];
+    final masked = <String>{};
     _walk(
       sels,
       include,
@@ -865,6 +922,7 @@ class _Builder {
       (name, conditions) {
         if (conditions.isEmpty) spreads.add(name);
       },
+      masked.add,
     );
 
     // Interfaces: the required ones plus the fragments spread
@@ -1027,6 +1085,33 @@ class _Builder {
         field.rawOverrides = parent?.rawName != null;
       }
     }
+
+    // Masked fragments: one member each, typed by the fragment's interface
+    // (the type-specific one when the class is of a concrete type).
+    for (final name in masked) {
+      final key = '...$name';
+      final parent = inherited(key);
+      final iface = ctx.fragmentInterface(name);
+      String dartName() {
+        if (parent != null) return unique(parent.dartName);
+        var name_ = dartFieldName(name.toCamelCase(), className: shape.name);
+        if (_memberNames.contains(name_) ||
+            (inheritsNodes && name_ == _Connection.name)) {
+          name_ = '${name_}_';
+        }
+        return unique(name_);
+      }
+
+      shape.fields.add(_Field(
+        kind: _FieldKind.fragment,
+        key: key,
+        dartName: dartName(),
+        nested: concrete ? iface.variants[shape.type] ?? iface : iface,
+        fragment: name,
+        overrides: parent != null,
+      ));
+    }
+
     // Interfaces don't declare `nodes`: a class implementing a fragment
     // would then have to rename its own selected `nodes` field.
     shape.connection = shape.kind == _Kind.iface ? null : _Connection.of(shape);
@@ -1060,6 +1145,7 @@ class _Emitter {
   final _Context ctx;
   final StringBuffer _out = StringBuffer();
   bool _usesUndefined = false;
+  bool usesMergeJson = false;
 
   /// Libraries declaring the fragment interfaces the code written so far
   /// implements, other than the file it is in: [localFragmentsLibrary]
@@ -1071,15 +1157,44 @@ class _Emitter {
       '/// Marks `copyWith` parameters that were not passed.\n'
       'const _undefined = Object();\n';
 
+  /// Merges the JSON of a class with that of its masked fragments.
+  static const mergeJson = '''
+/// Merges JSON objects of the same GraphQL object, later ones winning;
+/// nested objects and lists of them are merged as well.
+Map<String, dynamic> _mergeJson(List<Map<String, dynamic>> maps) {
+  final result = <String, dynamic>{};
+  for (final map in maps) {
+    map.forEach((key, value) => result[key] = _mergeJsonValue(result[key], value));
+  }
+  return result;
+}
+
+Object? _mergeJsonValue(Object? a, Object? b) {
+  if (a is Map<String, dynamic> && b is Map<String, dynamic>) {
+    return _mergeJson([a, b]);
+  }
+  if (a is List && b is List && a.length == b.length) {
+    return [for (var i = 0; i < a.length; i++) _mergeJsonValue(a[i], b[i])];
+  }
+  return b;
+}
+''';
+
   String get code => _out.toString();
 
   /// Appends declarations shared by the classes written so far.
   void finish() {
     if (_usesUndefined) _out.writeln(undefined);
+    if (usesMergeJson) _out.writeln(mergeJson);
   }
 
   /// Writes [shape] and everything declared under it.
   void tree(_Shape shape) {
+    // Masked fragments' interfaces and data classes are in fragments.dart.
+    if (!shape.fragment &&
+        shape.fields.any((f) => f.kind == _FieldKind.fragment)) {
+      libraries.add(localFragmentsLibrary);
+    }
     switch (shape.kind) {
       case _Kind.klass:
         _klass(shape);
@@ -1099,7 +1214,18 @@ class _Emitter {
         _FieldKind.untyped => 'dynamic',
         _FieldKind.regular => JsonExprs.outputDartType(f.type!,
             legacy: ctx.legacy, forceNullable: f.forced, named: f.nested?.name),
+        _FieldKind.fragment => f.nested!.name,
       };
+
+  /// Expression parsing masked fragment [f] of class [owner] from `json`,
+  /// the class's own JSON object.
+  String _fragmentFromJson(_Field f, _Shape owner) {
+    final data = ctx.fragmentFile.data[f.fragment]!;
+    final concrete = !ctx.schema.isAbstract(owner.type);
+    final klass = (concrete ? data.variants[owner.type] : null) ?? data;
+    final expr = '${klass.name}.fromJson(json)';
+    return klass.isSubtypeOf(f.nested!) ? expr : '$expr as ${f.nested!.name}';
+  }
 
   String _rawType(_Field f) => f.rawList ? 'List<String?>?' : 'String?';
 
@@ -1114,6 +1240,8 @@ class _Emitter {
         return '$v as Map<String, dynamic>?';
       case _FieldKind.untyped:
         return v;
+      case _FieldKind.fragment:
+        throw StateError('Masked fragments are parsed from the whole object');
       case _FieldKind.regular:
         final nested = f.nested;
         return JsonExprs.fromJsonExpr(f.type!, v,
@@ -1128,6 +1256,7 @@ class _Emitter {
 
   /// Expression serialising field [f] whose value is [v].
   String toJson(_Field f, String v, {bool promotable = false}) {
+    if (f.kind == _FieldKind.fragment) return '$v.toJson()';
     if (f.kind != _FieldKind.regular) return v;
     final raw = f.rawName;
     if (raw != null && !promotable) return _enumToJson(f, v, raw);
@@ -1210,6 +1339,11 @@ class _Emitter {
 
   /// Doc comment and `@Deprecated` of a field from the schema.
   void _fieldDoc(_Field f) {
+    if (f.kind == _FieldKind.fragment) {
+      _out.writeln('  /// The fields of the `${f.fragment}` fragment, which '
+          'are masked: they are\n  /// not members of this class.');
+      return;
+    }
     final def = f.def;
     if (def == null) return;
     var text = def.description?.value.trim() ?? '';
@@ -1376,6 +1510,8 @@ class _Emitter {
         expr = f.rawList
             ? '($v as List<dynamic>?)?.map((e) => e as String?).toList()'
             : '$v as String?';
+      } else if (f.kind == _FieldKind.fragment) {
+        expr = _fragmentFromJson(f, s);
       } else {
         expr = fromJson(f, v, typenameFallback: s.typenameFallback);
       }
@@ -1400,15 +1536,40 @@ class _Emitter {
     }
     _nodes(s, concrete: true);
 
-    // toJson.
+    // toJson; the JSON of masked fragments is merged in, since they may
+    // select other subfields of the same fields.
     if (s.supers.isNotEmpty) _out.writeln('  @override');
-    _out.writeln('  Map<String, dynamic> toJson() => <String, dynamic>{');
-    for (final f in s.fields) {
-      _out.writeln("        '${f.key}': ${toJson(f, f.dartName)},");
+    final masked = [
+      for (final f in s.fields)
+        if (f.kind == _FieldKind.fragment) f
+    ];
+    final own = [
+      for (final f in s.fields)
+        if (f.kind != _FieldKind.fragment)
+          "'${f.key}': ${toJson(f, f.dartName)},",
+    ];
+    if (masked.isEmpty) {
+      _out.writeln('  Map<String, dynamic> toJson() => <String, dynamic>{');
+      for (final entry in own) {
+        _out.writeln('        $entry');
+      }
+      _out.writeln('      };');
+    } else {
+      usesMergeJson = true;
+      _out.writeln('  Map<String, dynamic> toJson() => _mergeJson([');
+      for (final f in masked) {
+        _out.writeln('        ${toJson(f, f.dartName)},');
+      }
+      if (own.isNotEmpty) {
+        _out.writeln('        <String, dynamic>{');
+        for (final entry in own) {
+          _out.writeln('          $entry');
+        }
+        _out.writeln('        },');
+      }
+      _out.writeln('      ]);');
     }
-    _out
-      ..writeln('      };')
-      ..writeln();
+    _out.writeln();
 
     // copyWith.
     final copyWith = s.copyWith!;

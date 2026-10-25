@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-10-25
+
+### Added
+- `fragment_masking: true` keeps the fields of a spread fragment off the
+  class that spreads it. The class gets one member per fragment instead,
+  named after it and typed by its interface (`me.userCard.avatarUrl`), so a
+  screen can't come to depend on fields only a child widget's fragment
+  selects. The member is parsed from the same JSON object, and `toJson()`
+  merges its fields back in, so cache writes stay complete. Fragments mask
+  the fragments they spread too. Spreads under `@skip`/`@include` and
+  fragments from `fragment_imports` stay unmasked. Operation result types
+  only
+- `persisted_documents`: every operation document gets an id, its hash
+  (`sha256` by default, or `sha1`/`md5`), as `<operation>DocumentId`, and a
+  JSON manifest maps the ids to the documents for the server. The hashed
+  text is what `package:graphql` sends, `__typename` fields included.
+  `directory:` also writes one `<id>.graphql` per document (Hot Chocolate's
+  file system storage). `persisted_documents.dart` has
+  `PersistedDocumentsSerializer` for `HttpLink`, which sends the id instead
+  of the document, as `extensions.persistedQuery` (Apollo), `documentId` or
+  `id`. Checked against Hot Chocolate 15.0.3 with only persisted documents
+  allowed: queries and mutations run by id, documents sent as text are
+  refused
+
 ## [3.2.0] - 2026-10-25
 
 ### Added

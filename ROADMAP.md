@@ -9,6 +9,4 @@ Plans, not promises. Order may change; each item ships with tests.
   query back
 - Small naming options: how result classes are named, and the name of the
   `typename` field
-- Fragment data masking (a parent sees only its own fields, not the fields of
-  child fragments)
 - Several schemas in one project

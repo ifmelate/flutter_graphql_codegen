@@ -59,6 +59,62 @@ class FragmentImport {
   const FragmentImport({required this.dart, required this.documents});
 }
 
+/// The `persisted_documents` option.
+class PersistedDocumentsConfig {
+  /// Hash function of the document ids: `sha256` (default), `sha1` or `md5`.
+  final String algorithm;
+
+  /// Path of the JSON manifest mapping each id to its document.
+  final String manifest;
+
+  /// Directory that gets one `<id>.graphql` file per document (the layout of
+  /// Hot Chocolate's file system storage), or null.
+  final String? directory;
+
+  static const algorithms = {'sha256', 'sha1', 'md5'};
+  static const _keys = {'algorithm', 'manifest', 'directory'};
+
+  const PersistedDocumentsConfig(
+      {this.algorithm = 'sha256', required this.manifest, this.directory});
+
+  /// Reads the option's value [value]: `true`, `false`, or a map with
+  /// [_keys]. Problems that don't stop generation go to [warnings].
+  static PersistedDocumentsConfig? fromYaml(
+      Object? value, String outputDir, List<String> warnings) {
+    if (value == null || value == false) return null;
+    final defaultManifest =
+        '${outputDir.replaceAll(RegExp(r'/+$'), '')}/persisted_documents.json';
+    if (value == true) {
+      return PersistedDocumentsConfig(manifest: defaultManifest);
+    }
+    if (value is! YamlMap) {
+      throw CodegenException(
+        CodegenErrorCodes.cfgInvalid,
+        'persisted_documents must be true, false or a map ($_keys)',
+      );
+    }
+    for (final key in value.keys.map((k) => '$k')) {
+      if (!_keys.contains(key)) {
+        warnings.add('Unknown key "$key" in persisted_documents (expected '
+            '${_keys.join(', ')}); it is ignored');
+      }
+    }
+    final algorithm = value['algorithm']?.toString().trim() ?? 'sha256';
+    if (!algorithms.contains(algorithm)) {
+      throw CodegenException(
+        CodegenErrorCodes.cfgInvalid,
+        'Invalid persisted_documents algorithm "$algorithm". Valid options: '
+        '${algorithms.join(', ')}',
+      );
+    }
+    return PersistedDocumentsConfig(
+      algorithm: algorithm,
+      manifest: value['manifest']?.toString().trim() ?? defaultManifest,
+      directory: value['directory']?.toString().trim(),
+    );
+  }
+}
+
 final _packageUri = RegExp(r'^package:([a-z_][a-z0-9_]*)/(.+)$');
 
 /// Splits `package:name/path` into the package name and the path inside its
@@ -161,6 +217,15 @@ class GraphQLCodegenConfig {
   /// (operation result types only).
   final bool pruneTypes;
 
+  /// Keeps the fields of a spread fragment off the class that spreads it:
+  /// the class gets the fragment's data as one member instead
+  /// (`user.userFields.avatarUrl`). Operation result types only.
+  final bool fragmentMasking;
+
+  /// Hashes of the operation documents and a manifest of them for servers
+  /// that only run known documents; null when off.
+  final PersistedDocumentsConfig? persistedDocuments;
+
   /// HTTP headers sent when downloading a remote schema. Values may reference
   /// environment variables as `${NAME}`.
   final Map<String, String> schemaHeaders;
@@ -177,7 +242,8 @@ class GraphQLCodegenConfig {
     'deprecated_annotations', 'validate_documents', 'strict_scalars',
     'schema_endpoint', 'include_null_inputs', 'result_types',
     'flutter_widgets', 'flutter_hooks', 'enums', 'group_operations',
-    'types_import', 'fragment_imports', 'prune_types',
+    'types_import', 'fragment_imports', 'prune_types', 'fragment_masking',
+    'persisted_documents',
   };
 
   GraphQLCodegenConfig({
@@ -201,6 +267,8 @@ class GraphQLCodegenConfig {
     this.typesImport,
     this.fragmentImports = const [],
     this.pruneTypes = false,
+    this.fragmentMasking = false,
+    this.persistedDocuments,
     Map<String, String>? scalarMapping,
     Map<String, String>? scalarImports,
     Map<String, String>? scalarConverters,
@@ -342,6 +410,26 @@ class GraphQLCodegenConfig {
         mappingWarnings.add('prune_types has no effect with types_import: '
             'this package writes no types.dart');
       }
+      var fragmentMasking = yamlMap['fragment_masking'] as bool? ?? false;
+      if (fragmentMasking && resultTypes == 'schema') {
+        mappingWarnings.add('fragment_masking only applies to result_types: '
+            'operation; it is ignored');
+        fragmentMasking = false;
+      }
+      final persistedDocuments = PersistedDocumentsConfig.fromYaml(
+          yamlMap['persisted_documents'], outputDir, mappingWarnings);
+      // Its files would be read as documents and generate the operations
+      // again.
+      final directory = persistedDocuments?.directory;
+      if (directory != null &&
+          documentPaths.any((pattern) => Glob('$pattern').matches(
+              '${directory.replaceAll(RegExp(r'/+$'), '')}/x.graphql'))) {
+        throw CodegenException(
+          CodegenErrorCodes.cfgInvalid,
+          'persisted_documents directory "$directory" is matched by '
+          'document_paths; choose a directory outside of them',
+        );
+      }
 
       // Enums: `Enum: {type, import, from_json, to_json, fallback}`.
       const enumKeys = {'type', 'import', 'from_json', 'to_json', 'fallback'};
@@ -463,6 +551,8 @@ class GraphQLCodegenConfig {
         typesImport: typesImport,
         fragmentImports: fragmentImports,
         pruneTypes: pruneTypes,
+        fragmentMasking: fragmentMasking,
+        persistedDocuments: persistedDocuments,
         scalarMapping: scalarMappingMap,
         scalarImports: scalarImports,
         scalarConverters: scalarConverters,
