@@ -6,3 +6,5 @@ document_paths:
   - lib/graphql/documents/**/*.graphql
 strict_nullability: true
 unknown_enum_fallback: true
+# The schema has thousands of types; declare only what the operations use.
+prune_types: true

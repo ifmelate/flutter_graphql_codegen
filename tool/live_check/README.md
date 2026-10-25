@@ -12,7 +12,7 @@ generator the way an app does, against real servers:
 |---------|-----|-------------------|
 | `countries` | https://countries.trevorblades.com/graphql | input filters with nullable lists, a variable with a default used by `@include`, aliases with arguments, typed cache read/write |
 | `rick_and_morty` | https://rickandmortyapi.com/graphql | pagination, default (legacy) nullability, a fragment shared by two queries, fragment cache read/write |
-| `gitlab` | https://gitlab.com/api/graphql | a schema with thousands of types, a union deep in the result, a fragment on an interface, Relay `edges`/`nodes`/`pageInfo`, enum variables |
+| `gitlab` | https://gitlab.com/api/graphql | a schema with thousands of types (with `prune_types`), a union deep in the result, a fragment on an interface, Relay `edges`/`nodes`/`pageInfo`, enum variables |
 | `github` | https://api.github.com/graphql | interfaces (`GitObject`, `Node`, `Actor`), a union (`SearchResultItem`), input objects in arguments, a list of enums with a default |
 
 Each check prints `OK` or `FAIL`; the script exits with 1 when any fails.

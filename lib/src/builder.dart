@@ -24,6 +24,7 @@ import 'document_utils.dart';
 import 'formatting.dart';
 import 'naming.dart';
 import 'operation_groups.dart';
+import 'type_usage.dart';
 
 /// An operation file and the public top-level names it declares.
 class _Declarations {
@@ -68,7 +69,12 @@ class GraphQLCodegenBuilder implements Builder {
   final Map<String, Future<String>> _remoteSchemas = {};
 
   String? _cachedSchemaText;
+
+  /// The `prune_types` selection [_cachedArtifacts] was generated for.
+  String? _cachedUsedTypes;
   _SchemaArtifacts? _cachedArtifacts;
+  String? _parsedSchemaText;
+  DocumentNode? _parsedSchema;
   String? _lastWrittenTypes;
   bool _loggedConfigWarnings = false;
 
@@ -132,11 +138,21 @@ class GraphQLCodegenBuilder implements Builder {
 
     log.fine('Processing GraphQL operations in ${inputId.path}');
 
-    final artifacts = _artifactsFor(await _loadSchema(buildStep));
-    await _writeTypesFile(artifacts.typesCode);
-
+    final schemaText = await _loadSchema(buildStep);
     final imported = await _importedFragments(buildStep);
     _importedDeclarations = imported.declarations;
+
+    // With prune_types, types.dart depends on every document: it declares
+    // what their operations and fragments use.
+    Set<String>? usedTypes;
+    if (operationTypes &&
+        CodegenConfigContext.pruneTypes &&
+        CodegenConfigContext.typesImport == null) {
+      usedTypes = await _usedTypes(buildStep, document, schemaText, imported);
+    }
+    final artifacts = _artifactsFor(schemaText, usedTypes);
+    await _writeTypesFile(artifacts.typesCode);
+
     final Map<String, FragmentDefinitionNode> fragments;
     var fragmentLibraries = const <String, String>{};
     if (operationTypes) {
@@ -450,19 +466,38 @@ class GraphQLCodegenBuilder implements Builder {
     return posix;
   }
 
-  _SchemaArtifacts _artifactsFor(String schemaText) {
+  /// The parsed schema, reused while [schemaText] is unchanged.
+  DocumentNode _schemaDocFor(String schemaText) {
+    if (schemaText != _parsedSchemaText) {
+      _parsedSchema = gql_lang.parseString(schemaText);
+      _parsedSchemaText = schemaText;
+    }
+    return _parsedSchema!;
+  }
+
+  /// Schema artifacts; with [usedTypes] (`prune_types`), types.dart declares
+  /// only those types.
+  _SchemaArtifacts _artifactsFor(String schemaText, [Set<String>? usedTypes]) {
+    final usedKey =
+        usedTypes == null ? null : (usedTypes.toList()..sort()).join(',');
     final cached = _cachedArtifacts;
-    if (cached != null && schemaText == _cachedSchemaText) return cached;
+    if (cached != null &&
+        schemaText == _cachedSchemaText &&
+        usedKey == _cachedUsedTypes) {
+      return cached;
+    }
 
     try {
-      final schemaDoc = gql_lang.parseString(schemaText);
-      final typesCode = TypeGenerator.generateTypesFile(schemaText);
+      final schemaDoc = _schemaDocFor(schemaText);
+      final typesCode =
+          TypeGenerator.generateTypesFile(schemaText, only: usedTypes);
       final artifacts = _SchemaArtifacts(
         schemaDoc,
         typesCode,
         OperationAnalyzer.extractDefinedTypes(typesCode),
       );
       _cachedSchemaText = schemaText;
+      _cachedUsedTypes = usedKey;
       _cachedArtifacts = artifacts;
       return artifacts;
     } catch (e, st) {
@@ -511,6 +546,44 @@ class GraphQLCodegenBuilder implements Builder {
   /// of [document] (the one being built).
   Future<Map<String, FragmentDefinitionNode>> _allFragments(
       BuildStep buildStep, DocumentNode document) async {
+    final docs =
+        await _allDocuments(buildStep, document, mustContain: 'fragment');
+    try {
+      return DocumentUtils.collectFragments(docs);
+    } on CodegenException catch (e) {
+      throw _report(e);
+    }
+  }
+
+  /// The schema types the operations and fragments of all documents use
+  /// (`prune_types`).
+  Future<Set<String>> _usedTypes(BuildStep buildStep, DocumentNode document,
+      String schemaText, _ImportedFragments imported) async {
+    final docs = await _allDocuments(buildStep, document);
+    final Map<String, FragmentDefinitionNode> fragments;
+    try {
+      fragments = {
+        ...imported.fragments,
+        ...DocumentUtils.collectFragments(docs),
+      };
+    } on CodegenException catch (e) {
+      throw _report(e);
+    }
+    return TypeUsage.collect(
+      _schemaDocFor(schemaText),
+      [
+        for (final doc in docs)
+          ...doc.definitions.whereType<OperationDefinitionNode>(),
+      ],
+      fragments,
+    );
+  }
+
+  /// The documents matched by `document_paths` (only those whose text has
+  /// [mustContain], if given) plus [document], sorted by path.
+  Future<List<DocumentNode>> _allDocuments(
+      BuildStep buildStep, DocumentNode document,
+      {String? mustContain}) async {
     final docs = <AssetId, DocumentNode>{buildStep.inputId: document};
     for (final pattern in config.documentPaths) {
       final relative = _packageRelativePath(pattern);
@@ -518,7 +591,7 @@ class GraphQLCodegenBuilder implements Builder {
       await for (final id in buildStep.findAssets(Glob(relative))) {
         if (docs.containsKey(id)) continue;
         final text = await buildStep.readAsString(id);
-        if (!text.contains('fragment')) continue;
+        if (mustContain != null && !text.contains(mustContain)) continue;
         final cached = _parsedDocuments[id];
         DocumentNode? parsed;
         if (cached != null && cached.$1 == text) {
@@ -535,11 +608,7 @@ class GraphQLCodegenBuilder implements Builder {
       }
     }
     final ids = docs.keys.toList()..sort((a, b) => a.path.compareTo(b.path));
-    try {
-      return DocumentUtils.collectFragments(ids.map((id) => docs[id]!));
-    } on CodegenException catch (e) {
-      throw _report(e);
-    }
+    return [for (final id in ids) docs[id]!];
   }
 
   // ---------------------------------------------------------------------------
@@ -1204,6 +1273,7 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   CodegenConfigContext.enumConfigs = Map.of(cfg.enums);
   CodegenConfigContext.groupOperations = cfg.groupOperations;
   CodegenConfigContext.typesImport = cfg.typesImport;
+  CodegenConfigContext.pruneTypes = cfg.pruneTypes;
   CodegenConfigContext.fragmentImports = List.of(cfg.fragmentImports);
   CodegenConfigContext.scalarImports = Map.of(cfg.scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(cfg.scalarConverters);

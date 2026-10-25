@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-10-25
+
+### Added
+- `prune_types: true` declares in `types.dart` only the enums, input types,
+  custom scalars and `possibleTypes` entries that the operations and
+  fragments of `document_paths` use, instead of the whole schema. For
+  GitLab's public schema (4,580 types) and two queries, `types.dart` goes
+  from 134,016 lines to 421. Off by default, since code using a type that no
+  operation selects would stop compiling. Operation result types only
+- `GraphQLCodeGenerator.usedTypes(schema, documents)` and
+  `generateTypesFile(schema, only: ...)` for the same outside the builder
+
 ## [3.1.0] - 2026-10-22
 
 Flutter widgets and hooks, explicit nulls, per-enum settings, Relay `nodes`,
