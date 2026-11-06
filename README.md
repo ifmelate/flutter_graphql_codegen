@@ -828,6 +828,22 @@ list elements, variables and results. Give it a non-nullable JSON type
 (`JsonConverter<Money, int>`, not `<Money, Object?>`), so null values are
 handled for you instead of being passed to `fromJson`.
 
+Or give two top-level functions that `import` exports, as Artemis and
+graphql_codegen configure scalars:
+
+```yaml
+scalar_mapping:
+  Money:
+    type: Money
+    import: package:my_app/money.dart
+    from_json: moneyFromJson   # Money moneyFromJson(int json)
+    to_json: moneyToJson       # int moneyToJson(Money money)
+```
+
+`types.dart` then declares a `MoneyFunctionsConverter` that calls them, used
+like a `converter`. `from_json` gets the JSON value (never null), so it may
+take `dynamic` or the JSON type it expects.
+
 With `strict_scalars: true`, a custom scalar that isn't mapped (and isn't one of
 the built-in ones above) fails the build with `SCH401`, instead of silently
 becoming a wrapper class.

@@ -1383,6 +1383,7 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   CodegenConfigContext.fragmentImports = List.of(cfg.fragmentImports);
   CodegenConfigContext.scalarImports = Map.of(cfg.scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(cfg.scalarConverters);
+  CodegenConfigContext.scalarFunctions = Map.of(cfg.scalarFunctions);
   CodegenConfigContext.strictScalars = cfg.strictScalars;
 
   return GraphQLCodegenBuilder(cfg);

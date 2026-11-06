@@ -14,6 +14,10 @@ class CodegenConfigContext {
   static bool validateDocuments = true;
   static Map<String, String> scalarImports = <String, String>{};
   static Map<String, String> scalarConverters = <String, String>{};
+
+  /// See `GraphQLCodegenConfig.scalarFunctions`.
+  static Map<String, ScalarFunctions> scalarFunctions =
+      <String, ScalarFunctions>{};
   static bool strictScalars = false;
   static bool includeNullInputs = false;
 
@@ -66,6 +70,7 @@ class CodegenConfigContext {
     validateDocuments = true;
     scalarImports = <String, String>{};
     scalarConverters = <String, String>{};
+    scalarFunctions = <String, ScalarFunctions>{};
     strictScalars = false;
     includeNullInputs = false;
     resultTypes = 'operation';

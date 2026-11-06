@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5.2 with a server that returns only the selected fields. Off by default,
   since it changes the documents and persisted document ids
 
+- `scalar_mapping` takes `from_json` and `to_json`: two top-level functions
+  converting a custom scalar, which `import` exports, as Artemis and
+  graphql_codegen configure scalars. `types.dart` declares a
+  `<Scalar>FunctionsConverter` that calls them, used like `converter`, in
+  both result modes
+
 ### Fixed
 - The README said a query selecting an object without `id` could fail with
   `CacheMissException`; that doesn't happen with `package:graphql` 5.2. It
