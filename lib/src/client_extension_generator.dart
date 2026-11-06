@@ -11,6 +11,7 @@ import 'document_utils.dart';
 import 'document_validator.dart';
 import 'enum_settings.dart';
 import 'flutter_generator.dart';
+import 'id_fields.dart';
 import 'json_exprs.dart';
 import 'naming.dart';
 import 'operation_groups.dart';
@@ -97,6 +98,8 @@ $body''';
     final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
     EnumSettings.validate(schema);
+    fragments = IdFields.fragmentsOf(schema, fragments,
+        skip: fragmentLibraries.keys.toSet());
     final types =
         OperationTypes(schema, fragments, fragmentLibraries: fragmentLibraries);
     if (types.fragmentNames.isEmpty) return null;
@@ -276,8 +279,8 @@ ${request(writeIdFields)},
     Map<String, String> fragmentLibraries = const {},
   }) {
     final operationDoc = gql_lang.parseString(operationDocumentContent);
-    final operation = _findOperation(operationDoc, operationName);
-    final allFragments = {
+    final written = _findOperation(operationDoc, operationName);
+    final writtenFragments = {
       ...fragments,
       ...DocumentUtils.collectFragments([operationDoc]),
     };
@@ -286,8 +289,12 @@ ${request(writeIdFields)},
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
     EnumSettings.validate(schema);
     if (CodegenConfigContext.validateDocuments) {
-      DocumentValidator(schema).check(operation, allFragments);
+      DocumentValidator(schema).check(written, writtenFragments);
     }
+    // With add_id_fields, `id` is selected as if the documents had it.
+    final operation = IdFields.operationOf(schema, written);
+    final allFragments = IdFields.fragmentsOf(schema, writtenFragments,
+        skip: fragmentLibraries.keys.toSet());
 
     final context = _OperationContext(
       name: operationName,

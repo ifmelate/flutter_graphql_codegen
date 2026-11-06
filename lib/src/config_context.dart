@@ -47,6 +47,9 @@ class CodegenConfigContext {
   /// See `GraphQLCodegenConfig.fragmentMasking`.
   static bool fragmentMasking = false;
 
+  /// See `GraphQLCodegenConfig.addIdFields`.
+  static bool addIdFields = false;
+
   /// Hash function of persisted document ids, or null when
   /// `persisted_documents` is off.
   static String? persistedDocumentsAlgorithm;
@@ -74,6 +77,7 @@ class CodegenConfigContext {
     fragmentImports = <FragmentImport>[];
     pruneTypes = false;
     fragmentMasking = false;
+    addIdFields = false;
     persistedDocumentsAlgorithm = null;
   }
 }

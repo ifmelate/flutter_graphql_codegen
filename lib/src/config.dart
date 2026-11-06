@@ -222,6 +222,10 @@ class GraphQLCodegenConfig {
   /// (`user.userFields.avatarUrl`). Operation result types only.
   final bool fragmentMasking;
 
+  /// Selects `id` on every object type and interface that has one, the way
+  /// `__typename` is added, so the normalized cache can store every object.
+  final bool addIdFields;
+
   /// Hashes of the operation documents and a manifest of them for servers
   /// that only run known documents; null when off.
   final PersistedDocumentsConfig? persistedDocuments;
@@ -243,7 +247,7 @@ class GraphQLCodegenConfig {
     'schema_endpoint', 'include_null_inputs', 'result_types',
     'flutter_widgets', 'flutter_hooks', 'enums', 'group_operations',
     'types_import', 'fragment_imports', 'prune_types', 'fragment_masking',
-    'persisted_documents',
+    'persisted_documents', 'add_id_fields',
   };
 
   GraphQLCodegenConfig({
@@ -268,6 +272,7 @@ class GraphQLCodegenConfig {
     this.fragmentImports = const [],
     this.pruneTypes = false,
     this.fragmentMasking = false,
+    this.addIdFields = false,
     this.persistedDocuments,
     Map<String, String>? scalarMapping,
     Map<String, String>? scalarImports,
@@ -416,6 +421,7 @@ class GraphQLCodegenConfig {
             'operation; it is ignored');
         fragmentMasking = false;
       }
+      final addIdFields = yamlMap['add_id_fields'] as bool? ?? false;
       final persistedDocuments = PersistedDocumentsConfig.fromYaml(
           yamlMap['persisted_documents'], outputDir, mappingWarnings);
       // Its files would be read as documents and generate the operations
@@ -552,6 +558,7 @@ class GraphQLCodegenConfig {
         fragmentImports: fragmentImports,
         pruneTypes: pruneTypes,
         fragmentMasking: fragmentMasking,
+        addIdFields: addIdFields,
         persistedDocuments: persistedDocuments,
         scalarMapping: scalarMappingMap,
         scalarImports: scalarImports,
