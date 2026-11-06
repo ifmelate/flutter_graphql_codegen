@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<Scalar>FunctionsConverter` that calls them, used like `converter`, in
   both result modes
 
+- `dart run flutter_graphql_codegen:migrate` writes `graphql_codegen.yaml`
+  from the `build.yaml` options of Artemis or graphql_codegen (schema,
+  documents, output, scalars with their functions, enums, widgets and hooks)
+  and lists what it can't carry over. It stops on several schemas, which a
+  package can't have. Checked on the Artemis graphbrainz and graphql_codegen
+  examples: both build and their scalars go through their own functions
+- MIGRATION.md: coming from Artemis and from graphql_codegen, with the names
+  side by side
+
 ### Fixed
 - The README said a query selecting an object without `id` could fail with
   `CacheMissException`; that doesn't happen with `package:graphql` 5.2. It

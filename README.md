@@ -31,7 +31,9 @@ print(user?.name);
 
 `user` is a `GetUser_User` with exactly the fields the query selects.
 
-Upgrading from 2.x or 3.0? See [MIGRATION.md](MIGRATION.md).
+Upgrading from 2.x or 3.0, or coming from Artemis or graphql_codegen? See
+[MIGRATION.md](MIGRATION.md); `dart run flutter_graphql_codegen:migrate`
+writes the config from their `build.yaml` options.
 
 ## Installation
 
