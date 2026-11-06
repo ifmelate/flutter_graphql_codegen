@@ -4,6 +4,7 @@ library;
 import 'package:gql/ast.dart';
 import 'package:gql/language.dart' as gql_lang;
 import 'code_utils.dart';
+import 'config.dart' show ScalarFunctions;
 import 'config_context.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
@@ -53,7 +54,7 @@ class TypeGenerator {
     _only = CodegenConfigContext.operationResultTypes ? only : null;
     final needsConvert = _wrappedScalars(TypeRegistry.customScalars).any(_keep);
     final scalarConverters =
-        _generateScalarConverters(TypeRegistry.customScalars);
+        _generateScalarConverters(TypeRegistry.customScalars, schemaDoc);
     final enumDefinitions = _generateEnumDefinitions(schemaDoc);
     final enumConverters = _generateEnumConverters(schemaDoc);
     final typeDefinitions = _generateAllTypeDefinitions(schemaDoc, schema);
@@ -459,8 +460,45 @@ ${_generateNullableConverters()}${_usesEnumRaw ? _enumRawHelper : ''}''';
       customScalars.where(TypeRegistry.isWrappedScalar);
 
   /// Generates scalar converters for custom scalar types
-  static String _generateScalarConverters(Set<String> customScalars) {
+  static String _generateScalarConverters(
+      Set<String> customScalars, DocumentNode schema) {
     final buffer = StringBuffer();
+
+    // Scalars mapped with from_json/to_json: a converter calls the functions.
+    final scalars = {
+      for (final d in schema.definitions.whereType<ScalarTypeDefinitionNode>())
+        d.name.value,
+    };
+    for (final MapEntry(key: scalar, value: functions)
+        in CodegenConfigContext.scalarFunctions.entries) {
+      // Built-in scalars (ID, String, ...) aren't declared in the schema
+      // and aren't pruned.
+      final builtIn = GraphQLConstants.builtInScalars.contains(scalar);
+      if (!builtIn && (!scalars.contains(scalar) || !_keep(scalar))) continue;
+      final type = CodegenConfigContext.scalarMapping[scalar]!;
+      final name = ScalarFunctions.converterName(scalar);
+      buffer.writeln('''
+/// Converts the custom GraphQL scalar `$scalar` with `${functions.fromJson}`
+/// and `${functions.toJson}`.
+class $name implements JsonConverter<$type, Object> {
+  const $name();
+
+  @override
+  $type fromJson(Object json) {
+    final dynamic value = json;
+    // Also for functions with nullable types (Artemis' `...Nullable...`).
+    final Object? result = ${functions.fromJson}(value);
+    return result as $type;
+  }
+
+  @override
+  Object toJson($type object) {
+    final Object? json = ${functions.toJson}(object);
+    return json!;
+  }
+}
+''');
+    }
 
     for (final scalar in _wrappedScalars(customScalars).where(_keep)) {
       final name = SchemaAnalyzer.dartTypeName(scalar);

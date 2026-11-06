@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-11-06
+
+### Added
+- `add_id_fields: true` selects `id` on every object type and interface
+  that has a scalar `id` field, the way `__typename` is added, in the sent
+  documents and in the result classes. In unions it goes into the
+  `... on Type` selections. Without `id` the normalized cache keeps an
+  object only inside the result that returned it: a mutation returning
+  `rename { name }` didn't update other queries, and
+  `read<Fragment>Fragment` returned null. Checked against `package:graphql`
+  5.2 with a server that returns only the selected fields. Two cases stay
+  without `id` so documents stay valid: a selection where another field is
+  aliased `id` (also through inline fragments and spreads; a fragment that
+  would get `id` there fails with `BLD109`), and types that share a union
+  or interface with a type whose `id` has another type. Imported fragments
+  (`fragment_imports`) follow the option too, so both packages need the
+  same setting. Off by default, since it changes the documents and
+  persisted document ids
+
+- `scalar_mapping` takes `from_json` and `to_json`: two top-level functions
+  converting a custom scalar, which `import` exports, as Artemis and
+  graphql_codegen configure scalars. `types.dart` declares a
+  `<Scalar>FunctionsConverter` that calls them, used like `converter`, in
+  both result modes
+
+- `dart run flutter_graphql_codegen:migrate` writes `graphql_codegen.yaml`
+  from the `build.yaml` options of Artemis or graphql_codegen (schema,
+  documents, output, scalars with their functions, enums, widgets and hooks)
+  and lists what it can't carry over. It stops on several schemas, which a
+  package can't have. Checked on the Artemis graphbrainz and graphql_codegen
+  examples: both build and their scalars go through their own functions
+- MIGRATION.md: coming from Artemis and from graphql_codegen, with the names
+  side by side
+
+### Fixed
+- The README said a query selecting an object without `id` could fail with
+  `CacheMissException`; that doesn't happen with `package:graphql` 5.2. It
+  now describes what does: stale results after mutations and fragment reads
+  that return null
+
 ## [3.3.0] - 2026-10-25
 
 ### Added

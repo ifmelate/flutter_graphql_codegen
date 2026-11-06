@@ -21,6 +21,7 @@ import 'config_context.dart';
 import 'declarations.dart';
 import 'diagnostics.dart';
 import 'document_utils.dart';
+import 'id_fields.dart';
 import 'formatting.dart';
 import 'naming.dart';
 import 'operation_groups.dart';
@@ -227,7 +228,8 @@ class GraphQLCodegenBuilder implements Builder {
     }
 
     await _writeGroupFiles(buildStep, artifacts);
-    await _writePersistedDocuments(buildStep, document, imported);
+    await _writePersistedDocuments(
+        buildStep, document, imported, artifacts.schemaDoc);
 
     // Generate index file after processing operations (if enabled)
     if (config.emitIndex) {
@@ -1021,8 +1023,11 @@ class GraphQLCodegenBuilder implements Builder {
   /// Writes persisted_documents.dart, the manifest and the documents
   /// directory for the operations of all documents, or removes
   /// persisted_documents.dart when the option is off.
-  Future<void> _writePersistedDocuments(BuildStep buildStep,
-      DocumentNode document, _ImportedFragments imported) async {
+  Future<void> _writePersistedDocuments(
+      BuildStep buildStep,
+      DocumentNode document,
+      _ImportedFragments imported,
+      DocumentNode schemaDoc) async {
     final options = config.persistedDocuments;
     final file = File(p.join(config.outputDir, persistedDocumentsLibrary));
     if (options == null) {
@@ -1048,17 +1053,20 @@ class GraphQLCodegenBuilder implements Builder {
     final documents = <String, String>{};
     for (final doc in docs) {
       // As for the operation files: a document's own fragments come first.
-      final own = {
+      final written = {
         ...fragments,
         ...DocumentUtils.collectFragments([doc])
       };
+      // The documents the operation files embed, `id` fields included.
+      final own = IdFields.fragmentsOf(schemaDoc, written);
       for (final op in doc.definitions.whereType<OperationDefinitionNode>()) {
         final name = op.name?.value;
         if (name == null) continue;
         final String text;
         try {
           text = persistedDocumentText(
-              ClientExtensionGenerator.operationDocumentText(op, own));
+              ClientExtensionGenerator.operationDocumentText(
+                  IdFields.operationOf(schemaDoc, op, written), own));
         } on CodegenException {
           // Reported when that document itself is built.
           continue;
@@ -1366,11 +1374,13 @@ Builder graphqlCodegenBuilder(BuilderOptions options) {
   CodegenConfigContext.typesImport = cfg.typesImport;
   CodegenConfigContext.pruneTypes = cfg.pruneTypes;
   CodegenConfigContext.fragmentMasking = cfg.fragmentMasking;
+  CodegenConfigContext.addIdFields = cfg.addIdFields;
   CodegenConfigContext.persistedDocumentsAlgorithm =
       cfg.persistedDocuments?.algorithm;
   CodegenConfigContext.fragmentImports = List.of(cfg.fragmentImports);
   CodegenConfigContext.scalarImports = Map.of(cfg.scalarImports);
   CodegenConfigContext.scalarConverters = Map.of(cfg.scalarConverters);
+  CodegenConfigContext.scalarFunctions = Map.of(cfg.scalarFunctions);
   CodegenConfigContext.strictScalars = cfg.strictScalars;
 
   return GraphQLCodegenBuilder(cfg);

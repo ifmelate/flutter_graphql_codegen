@@ -4,7 +4,9 @@ library;
 
 import 'package:gql/ast.dart';
 
+import 'config_context.dart';
 import 'document_utils.dart';
+import 'id_fields.dart';
 import 'schema_analyzer.dart';
 
 /// Collects the enums, input types, custom scalars and abstract types that
@@ -36,6 +38,14 @@ class TypeUsage {
       for (final d in merged.definitions.whereType<TypeDefinitionNode>())
         d.name.value: d,
     });
+    if (CodegenConfigContext.addIdFields) {
+      final ids = IdFields(merged, fragments);
+      operations = [for (final o in operations) ids.operation(o)];
+      fragments = {
+        for (final MapEntry(:key, :value) in fragments.entries)
+          key: ids.fragment(value),
+      };
+    }
     for (final operation in operations) {
       for (final v in operation.variableDefinitions) {
         usage._input(_named(v.type));

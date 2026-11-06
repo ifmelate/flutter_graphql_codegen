@@ -27,6 +27,9 @@ class CodegenErrorCodes {
   /// Two generated files declare the same top-level name (index.dart could
   /// not export both).
   static const String buildDuplicateDeclaration = 'BLD108';
+
+  /// `add_id_fields` would add `id` where another field is aliased `id`.
+  static const String buildIdAliasConflict = 'BLD109';
   static const String buildIndexFailed = 'BLD200';
 }
 

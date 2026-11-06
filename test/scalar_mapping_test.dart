@@ -173,4 +173,37 @@ ${_base}scalar_mapping:
           contains('Map<String, dynamic>? a;'));
     });
   });
+
+  group('from_json and to_json', () {
+    GraphQLCodegenConfig parse(String entry) =>
+        GraphQLCodegenConfig.fromYaml('${_base}scalar_mapping:\n  Money:\n'
+            '    type: Money\n$entry');
+
+    test('name the converter types.dart declares around the functions', () {
+      final config = parse('    import: package:app/money.dart\n'
+          '    from_json: moneyFromJson\n    to_json: moneyToJson\n');
+      expect(config.scalarFunctions['Money']?.fromJson, 'moneyFromJson');
+      expect(config.scalarFunctions['Money']?.toJson, 'moneyToJson');
+      expect(config.scalarConverters['Money'], 'MoneyFunctionsConverter');
+      expect(config.warnings, isEmpty);
+    });
+
+    test('need each other, an import and no converter', () {
+      Matcher fails(String text) => throwsA(isA<CodegenException>()
+          .having((e) => e.message, 'message', contains(text)));
+      expect(
+          () => parse('    import: package:app/money.dart\n'
+              '    from_json: moneyFromJson\n'),
+          fails('needs both from_json and to_json'));
+      expect(
+          () =>
+              parse('    from_json: moneyFromJson\n    to_json: moneyToJson\n'),
+          fails('needs the import'));
+      expect(
+          () => parse('    import: package:app/money.dart\n'
+              '    converter: MoneyConverter\n'
+              '    from_json: moneyFromJson\n    to_json: moneyToJson\n'),
+          fails('use one of them'));
+    });
+  });
 }

@@ -31,7 +31,9 @@ print(user?.name);
 
 `user` is a `GetUser_User` with exactly the fields the query selects.
 
-Upgrading from 2.x or 3.0? See [MIGRATION.md](MIGRATION.md).
+Upgrading from 2.x or 3.0, or coming from Artemis or graphql_codegen? See
+[MIGRATION.md](MIGRATION.md); `dart run flutter_graphql_codegen:migrate`
+writes the config from their `build.yaml` options.
 
 ## Installation
 
@@ -41,7 +43,7 @@ dependencies:
   json_annotation: ^4.8.1
 
 dev_dependencies:
-  flutter_graphql_codegen: ^3.3.0
+  flutter_graphql_codegen: ^3.4.0
   build_runner: ^2.4.6
 ```
 
@@ -162,6 +164,7 @@ and 64 on wrong usage, so it works in scripts and CI.
 | `prune_types` | `false` | Declare in `types.dart` only the enums, input types and scalars your operations and fragments use (see [Smaller types.dart](#smaller-typesdart)) |
 | `fragment_masking` | `false` | Keep a spread fragment's fields off the class that spreads it (see [Fragment masking](#fragment-masking)) |
 | `persisted_documents` | `false` | Give every operation document an id and write a manifest for the server (see [Persisted documents](#persisted-documents)) |
+| `add_id_fields` | `false` | Select `id` on every object that has one, the way `__typename` is added (see [Cache](#cache)) |
 
 A misspelled key is ignored with a warning that suggests the closest option.
 
@@ -514,12 +517,42 @@ Active `watchQuery` results aren't notified; call `refetch()` on them if you
 need fresh data right away.
 
 **Select `id` on entities.** The normalized cache of `package:graphql` stores
-objects by `__typename` and `id`. If one query selects `user { id name }` and
-another selects `user { name }` without `id`, the cache can fail to read the
-second back once the first has stored that user under its `id`, and the query
-fails with `CacheMissException`. Select `id` on every object that has one, in
-every operation and fragment that reads it. `__typename` is added for you;
-`id` is not.
+objects by `__typename` and `id`. An object returned without `id` is kept
+only inside the result that returned it, so:
+
+- a mutation that returns `rename { name }` doesn't update the user other
+  queries show: they keep the old name until they are fetched again;
+- `read<Fragment>Fragment({'id': '2'})` returns null for an object that came
+  back without `id`.
+
+Select `id` on every object that has one, or turn on `add_id_fields`, which
+does it for you:
+
+```yaml
+add_id_fields: true
+```
+
+It adds `id` the way `__typename` is added: to the documents sent to the
+server and to the result classes, as if you had selected it, so
+`rename { name }` gives a `Rename_Rename` with `id` and `name`. A selection
+gets `id` when its type, an object type or an interface, has an `id` field of
+a scalar type that takes no required arguments. Unions have no fields of
+their own, so there `id` goes into the `... on Type` selections whose type
+has one.
+
+Two cases are left alone, because `id` would make the document invalid:
+
+- a selection where another field is aliased `id` (`id: name`), directly,
+  in an inline fragment or in a fragment it spreads. If a fragment spread
+  there would get `id` itself, the build fails with `BLD109`: rename the
+  alias;
+- a type that shares a union or interface with a type whose `id` has
+  another type (`ID!` next to `Int!` or `ID`), since the `... on` selections
+  of a union must agree on the type of each field. Such a type gets no `id`
+  anywhere, so its fragments look the same in every operation.
+
+The option is off by default because it changes the documents, and with
+them the ids of [persisted documents](#persisted-documents).
 
 Fragments can be read and written for a single object.
 `read<Fragment>Fragment` returns a `<Fragment>Data` (null when the object isn't
@@ -806,6 +839,22 @@ with a `const` constructor, exported by the same `import`. It's used for fields,
 list elements, variables and results. Give it a non-nullable JSON type
 (`JsonConverter<Money, int>`, not `<Money, Object?>`), so null values are
 handled for you instead of being passed to `fromJson`.
+
+Or give two top-level functions that `import` exports, as Artemis and
+graphql_codegen configure scalars:
+
+```yaml
+scalar_mapping:
+  Money:
+    type: Money
+    import: package:my_app/money.dart
+    from_json: moneyFromJson   # Money moneyFromJson(int json)
+    to_json: moneyToJson       # int moneyToJson(Money money)
+```
+
+`types.dart` then declares a `MoneyFunctionsConverter` that calls them, used
+like a `converter`. `from_json` gets the JSON value (never null), so it may
+take `dynamic` or the JSON type it expects.
 
 With `strict_scalars: true`, a custom scalar that isn't mapped (and isn't one of
 the built-in ones above) fails the build with `SCH401`, instead of silently
@@ -1135,7 +1184,8 @@ users.map(label);   // FeatureUsers_Users implements the shared UserBits
   warns and asks you to generate it.
 - Use the same type-related options in both packages: `strict_nullability`,
   `scalar_mapping`, `enums`, `unknown_enum_fallback`, `include_null_inputs`,
-  `deprecated_annotations` and `result_types`. The feature's generated code
+  `deprecated_annotations`, `add_id_fields` and `result_types`. The feature's
+  generated code
   assumes the shared `types.dart` was generated with its own settings.
 - With `result_types: schema`, `types_import` works the same way;
   `fragment_imports` only adds the shared fragment definitions to the
@@ -1187,6 +1237,7 @@ Problems found during generation are reported with a code:
 | `BLD106` | A variable is used but not declared, declared but never used, or has an unknown or non-input type |
 | `BLD107` | A selection set is missing (object field) or not allowed (scalar field), a fragment is on an unknown or non-composite type, a fragment spreads itself, or an alias starts with `__` |
 | `BLD108` | Two operations, or an operation and `fragments.dart`, would declare the same top-level name (e.g. `A_B_C` from operations `A_B` and `A`); also a Flutter widget or `Run<Op>Mutation` named like a type in `types.dart`, two documents directories that become the same operation group, a group class clashing with another declaration, and a name clashing with a `fragment_imports` library |
+| `BLD109` | With `add_id_fields`, a fragment that gets `id` is spread where another field is aliased `id` |
 | `BLD200` | Writing `index.dart` failed |
 
 `BLD103` and `BLD105`–`BLD107` come from checking each operation against the
@@ -1224,9 +1275,10 @@ each attempt (SDL, `?sdl`, introspection) returned. A 401 or 403 usually means
 `schema_headers` are missing; HTML in the response usually means the URL points
 to a playground page instead of the API.
 
-**`CacheMissException` for a query that worked over the network**: some
-operation probably selects an object without its `id` while another selects
-it with `id`. Select `id` everywhere (see [Cache](#cache)).
+**A mutation doesn't update what other queries show**, or
+**`read<Fragment>Fragment` returns null** for an object a query returned: the
+object probably came back without `id`. Select `id` everywhere or turn on
+`add_id_fields` (see [Cache](#cache)).
 
 **Widget tests with a subscription fail on the `connectivity_plus` channel**:
 mock it (see [Testing widgets with subscriptions](#testing-widgets-with-subscriptions)).

@@ -2,6 +2,8 @@
 
 - [3.0 to 3.1](#migrating-from-30-to-31)
 - [2.x to 3.0](#migrating-from-2x-to-30)
+- [From Artemis](#coming-from-artemis)
+- [From graphql_codegen](#coming-from-graphql_codegen)
 
 ## Migrating from 3.0 to 3.1
 
@@ -280,3 +282,128 @@ If you use it:
 - [ ] `switch` over unions and interfaces uses `_On<Type>` / `_Other`
 - [ ] `write<Op>` calls pass typed results
 - [ ] no assignments to input fields
+
+## Coming from Artemis
+
+Artemis was [discontinued](https://github.com/gql-dart/ferry/issues/541) in
+2023. Its schema, documents and custom scalar functions can stay as they are.
+
+### 1. Config
+
+```bash
+dart run flutter_graphql_codegen:migrate
+```
+
+reads the `artemis` options in `build.yaml` and writes
+`graphql_codegen.yaml`: the schema, `queries_glob` and `fragments_glob` as
+`document_paths`, and `scalar_mapping`. A scalar with `custom_parser_import`
+keeps your coercers as `from_json` and `to_json`. Artemis names them after
+the field's shape, so `migrate` looks into that file and takes
+`fromGraphQLDateToDartDateTime`/`fromDartDateTimeToGraphQLDate` or the
+`...Nullable...` pair, whichever it defines; one pair serves every field
+shape, null and lists are handled for you. If the file has only list
+coercers, or isn't in your package, the command says which pair to add or
+check. It then lists everything else it couldn't carry over. Then:
+
+```yaml
+# pubspec.yaml
+dependencies:
+  graphql: ^5.1.3          # instead of artemis, equatable and gql
+  json_annotation: ^4.8.1
+
+dev_dependencies:
+  flutter_graphql_codegen: ^3.4.0   # instead of artemis
+  build_runner: ^2.4.6
+```
+
+Remove the `artemis` builder from `build.yaml` and run
+`dart run build_runner build --delete-conflicting-outputs`.
+
+A `schema_mapping` with several schemas can't be migrated as one package:
+flutter_graphql_codegen reads one schema per package, so `migrate` stops and
+says so. Put the operations of each schema in a package of their own.
+
+### 2. Calling operations
+
+There is no `ArtemisClient`: operations are extension methods on
+`GraphQLClient` from `package:graphql`, which also gives you the normalized
+cache.
+
+| Artemis | flutter_graphql_codegen |
+|---------|-------------------------|
+| `client.execute(SearchQuery(variables: SearchArguments(query: 'x')))` | `client.searchData(const SearchVariables(query: 'x').toJson())` |
+| `response.data?.search` | the return value: the root field's class when the operation selects one root field, `SearchResult` with a property per field otherwise |
+| `response.errors` | `search(...)` and `searchData(...)` throw `OperationException`; `client.query(searchQueryOptions(...))` returns a `QueryResult` to check instead |
+| `SearchArguments` | `SearchVariables` |
+| `SEARCH_QUERY_DOCUMENT`, `SEARCH_QUERY_DOCUMENT_OPERATION_NAME` | `searchDocument`, `searchOperationName` |
+| `Search$Query.fromJson(data)` | `parseSearchData(data)` |
+| `client.stream(query)` (subscriptions) | `client.subscribe(searchSubscriptionOptions(...))` |
+
+### 3. Result classes
+
+| Artemis (`pathedWithTypes`) | flutter_graphql_codegen |
+|---------|-------------------------|
+| `Search$Query$SearchResultItemConnection` | `Search_Search`: operation, then the response keys, not the types |
+| `...$SearchResultItem$Repository` (a subclass, check with `whereType`) | `Search_Search_Nodes_OnRepository`, a case of a sealed class: `switch` over it |
+| mutable fields, `EquatableMixin` | `final` fields, `const` constructors, `==`, `copyWith` |
+| `artemisUnknown` | `$unknown` with `unknown_enum_fallback: true`, which `migrate` turns on |
+| fragment mixins `UserFieldsMixin` | interfaces `UserFields`, and `UserFieldsData` (see [Fragments](README.md#fragments)) |
+
+Artemis classes follow the schema's nullability, so `migrate` turns on
+`strict_nullability`.
+
+## Coming from graphql_codegen
+
+Your documents, the schema and the scalar and enum functions stay. The
+difference you notice first: files. graphql_codegen writes a `.graphql.dart`
+next to each document; flutter_graphql_codegen writes one file per operation
+into `output_dir` and an `index.dart` that exports them all.
+
+### 1. Config
+
+```bash
+dart run flutter_graphql_codegen:migrate
+```
+
+reads the `graphql_codegen` options in `build.yaml` and writes
+`graphql_codegen.yaml` (this package's config file happens to share the
+name). It finds the schema among your documents, maps `scalars` (with
+`fromJsonFunctionName`/`toJsonFunctionName` as `from_json`/`to_json`) and
+`enums` (`fallbackEnumValue` as `fallback`, custom types as they are),
+turns on `unknown_enum_fallback` (graphql_codegen adds `$unknown` to every
+enum too) and, for the `graphql_flutter` client, widgets and hooks. Then
+replace `graphql_codegen` with `flutter_graphql_codegen` in
+`dev_dependencies`, remove its builder from `build.yaml` and build.
+
+Only `.graphql` files are read as documents; rename `.gql` ones. Several
+`scopes` (one schema each) can't be migrated as one package; `migrate` stops
+and says so.
+
+### 2. Names
+
+| graphql_codegen | flutter_graphql_codegen |
+|-----------------|-------------------------|
+| `Query$FetchPerson` (the whole `data`) | `FetchPersonResult` with several root fields; with one, the root field's class directly |
+| `Query$FetchPerson$fetchPerson` | `FetchPerson_FetchPerson` |
+| `Variables$Query$FetchPerson` | `FetchPersonVariables` |
+| `Options$Query$FetchPerson(variables: ...)` | `fetchPersonQueryOptions(variables, fetchPolicy: ...)` |
+| `WatchOptions$Query$FetchPerson` | `fetchPersonWatchQueryOptions(...)` |
+| `client.query$FetchPerson(options)` | `client.query(fetchPersonQueryOptions(...))`, or `client.fetchPersonData(...)` for just the data |
+| `client.readQuery$FetchPerson(variables: ...)` | `client.readFetchPerson(variables)` |
+| `client.readFragment$PersonSummary(idFields: {...})` | `client.readPersonSummaryFragment({...})` |
+| `Fragment$PersonSummary` | `PersonSummary` (interface) and `PersonSummaryData` |
+| `Input$PersonFilter`, `Enum$Status` | `PersonFilter`, `Status` |
+| `documentNodeQueryFetchPerson` | `fetchPersonDocument` |
+| `Query$FetchPerson$Widget` | `FetchPersonQuery` |
+| `useQuery$FetchPerson`, `useMutation$UpdatePerson` | `useFetchPersonQuery`, `useUpdatePersonMutation` |
+
+Input classes leave out `null` fields the same way. To send an explicit
+`null`, graphql_codegen used `copyWith(field: null)`; here that works too,
+and so does `PersonFilter.withNulls(field: null)`.
+
+### 3. What has no equivalent
+
+`addTypenameExcludedPaths` (`__typename` goes into every selection but the
+root), `namingSeparator`, `generatedFileHeader`, `extraKeywords` (fields
+named like keywords are renamed for you) and `disableCopyWithGeneration`.
+`migrate` lists the ones your `build.yaml` sets.

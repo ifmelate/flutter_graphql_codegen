@@ -167,6 +167,11 @@ class GraphQLCodegenConfig {
   /// its mapped Dart type.
   final Map<String, String> scalarConverters;
 
+  /// GraphQL scalar -> the functions converting it, for scalars mapped with
+  /// `from_json` and `to_json`. Their [scalarConverters] entry names the
+  /// converter `types.dart` declares around the functions.
+  final Map<String, ScalarFunctions> scalarFunctions;
+
   /// Fails generation for custom scalars without a `scalar_mapping` entry
   /// (instead of generating a wrapper class for them).
   final bool strictScalars;
@@ -222,6 +227,10 @@ class GraphQLCodegenConfig {
   /// (`user.userFields.avatarUrl`). Operation result types only.
   final bool fragmentMasking;
 
+  /// Selects `id` on every object type and interface that has one, the way
+  /// `__typename` is added, so the normalized cache can store every object.
+  final bool addIdFields;
+
   /// Hashes of the operation documents and a manifest of them for servers
   /// that only run known documents; null when off.
   final PersistedDocumentsConfig? persistedDocuments;
@@ -243,7 +252,7 @@ class GraphQLCodegenConfig {
     'schema_endpoint', 'include_null_inputs', 'result_types',
     'flutter_widgets', 'flutter_hooks', 'enums', 'group_operations',
     'types_import', 'fragment_imports', 'prune_types', 'fragment_masking',
-    'persisted_documents',
+    'persisted_documents', 'add_id_fields',
   };
 
   GraphQLCodegenConfig({
@@ -268,16 +277,19 @@ class GraphQLCodegenConfig {
     this.fragmentImports = const [],
     this.pruneTypes = false,
     this.fragmentMasking = false,
+    this.addIdFields = false,
     this.persistedDocuments,
     Map<String, String>? scalarMapping,
     Map<String, String>? scalarImports,
     Map<String, String>? scalarConverters,
+    Map<String, ScalarFunctions>? scalarFunctions,
     this.strictScalars = false,
     Map<String, String>? schemaHeaders,
     this.warnings = const [],
   })  : scalarMapping = scalarMapping ?? const {},
         scalarImports = scalarImports ?? const {},
         scalarConverters = scalarConverters ?? const {},
+        scalarFunctions = scalarFunctions ?? const {},
         schemaHeaders = schemaHeaders ?? const {};
 
   factory GraphQLCodegenConfig.fromYaml(String yamlString) {
@@ -354,6 +366,7 @@ class GraphQLCodegenConfig {
       final scalarMappingMap = <String, String>{};
       final scalarImports = <String, String>{};
       final scalarConverters = <String, String>{};
+      final scalarFunctions = <String, ScalarFunctions>{};
       final mappingWarnings = <String>[];
       final yamlScalars = yamlMap['scalar_mapping'];
       if (yamlScalars is yaml.YamlMap) {
@@ -379,10 +392,38 @@ class GraphQLCodegenConfig {
           if (v['converter'] case final Object converter) {
             scalarConverters[k] = converter.toString();
           }
+          final fromJson = v['from_json']?.toString();
+          final toJson = v['to_json']?.toString();
+          if (fromJson != null || toJson != null) {
+            if (fromJson == null || toJson == null) {
+              throw CodegenException(
+                CodegenErrorCodes.cfgInvalid,
+                'scalar_mapping entry "$k" needs both from_json and to_json',
+              );
+            }
+            if (scalarConverters.containsKey(k)) {
+              throw CodegenException(
+                CodegenErrorCodes.cfgInvalid,
+                'scalar_mapping entry "$k" has a converter and from_json/'
+                'to_json; use one of them',
+              );
+            }
+            if (!scalarImports.containsKey(k)) {
+              throw CodegenException(
+                CodegenErrorCodes.cfgInvalid,
+                'scalar_mapping entry "$k" needs the import that exports '
+                '$fromJson and $toJson',
+              );
+            }
+            scalarFunctions[k] = ScalarFunctions(fromJson, toJson);
+            scalarConverters[k] = ScalarFunctions.converterName(k);
+          }
           for (final key in v.keys.map((key) => '$key')) {
-            if (!const {'type', 'import', 'converter'}.contains(key)) {
+            if (!const {'type', 'import', 'converter', 'from_json', 'to_json'}
+                .contains(key)) {
               mappingWarnings.add('Unknown key "$key" in scalar_mapping entry '
-                  '"$k" (expected type, import or converter); it is ignored');
+                  '"$k" (expected type, import, converter, from_json or '
+                  'to_json); it is ignored');
             }
           }
         }
@@ -416,6 +457,7 @@ class GraphQLCodegenConfig {
             'operation; it is ignored');
         fragmentMasking = false;
       }
+      final addIdFields = yamlMap['add_id_fields'] as bool? ?? false;
       final persistedDocuments = PersistedDocumentsConfig.fromYaml(
           yamlMap['persisted_documents'], outputDir, mappingWarnings);
       // Its files would be read as documents and generate the operations
@@ -552,10 +594,12 @@ class GraphQLCodegenConfig {
         fragmentImports: fragmentImports,
         pruneTypes: pruneTypes,
         fragmentMasking: fragmentMasking,
+        addIdFields: addIdFields,
         persistedDocuments: persistedDocuments,
         scalarMapping: scalarMappingMap,
         scalarImports: scalarImports,
         scalarConverters: scalarConverters,
+        scalarFunctions: scalarFunctions,
         strictScalars: strictScalars,
         schemaHeaders: schemaHeaders,
         warnings: [
@@ -633,5 +677,26 @@ class GraphQLCodegenConfig {
       final glob = Glob(path);
       return glob.listSync().whereType<File>().map((file) => file.path);
     }).toList();
+  }
+}
+
+/// The top-level functions converting a custom scalar from and to JSON
+/// (`from_json` and `to_json` in `scalar_mapping`).
+class ScalarFunctions {
+  const ScalarFunctions(this.fromJson, this.toJson);
+
+  /// Name of a function taking the JSON value and returning the Dart type.
+  final String fromJson;
+
+  /// Name of a function taking the Dart type and returning its JSON value.
+  final String toJson;
+
+  /// Name of the `JsonConverter` that `types.dart` declares for [scalar]:
+  /// public, also for scalars such as Hasura's `_text`.
+  static String converterName(String scalar) {
+    final name = scalar.replaceFirst(RegExp('^_+'), '');
+    return name.isEmpty
+        ? 'ScalarFunctionsConverter'
+        : '${name[0].toUpperCase()}${name.substring(1)}FunctionsConverter';
   }
 }

@@ -14,6 +14,10 @@ class CodegenConfigContext {
   static bool validateDocuments = true;
   static Map<String, String> scalarImports = <String, String>{};
   static Map<String, String> scalarConverters = <String, String>{};
+
+  /// See `GraphQLCodegenConfig.scalarFunctions`.
+  static Map<String, ScalarFunctions> scalarFunctions =
+      <String, ScalarFunctions>{};
   static bool strictScalars = false;
   static bool includeNullInputs = false;
 
@@ -47,6 +51,9 @@ class CodegenConfigContext {
   /// See `GraphQLCodegenConfig.fragmentMasking`.
   static bool fragmentMasking = false;
 
+  /// See `GraphQLCodegenConfig.addIdFields`.
+  static bool addIdFields = false;
+
   /// Hash function of persisted document ids, or null when
   /// `persisted_documents` is off.
   static String? persistedDocumentsAlgorithm;
@@ -63,6 +70,7 @@ class CodegenConfigContext {
     validateDocuments = true;
     scalarImports = <String, String>{};
     scalarConverters = <String, String>{};
+    scalarFunctions = <String, ScalarFunctions>{};
     strictScalars = false;
     includeNullInputs = false;
     resultTypes = 'operation';
@@ -74,6 +82,7 @@ class CodegenConfigContext {
     fragmentImports = <FragmentImport>[];
     pruneTypes = false;
     fragmentMasking = false;
+    addIdFields = false;
     persistedDocumentsAlgorithm = null;
   }
 }
