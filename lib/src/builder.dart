@@ -1049,19 +1049,16 @@ class GraphQLCodegenBuilder implements Builder {
     } on CodegenException catch (e) {
       throw _report(e);
     }
-    // The documents the operation files embed, `id` fields included.
-    final skip = imported.fragments.keys.toSet();
     final ids = <String, String>{};
     final documents = <String, String>{};
     for (final doc in docs) {
       // As for the operation files: a document's own fragments come first.
-      final own = IdFields.fragmentsOf(
-          schemaDoc,
-          {
-            ...fragments,
-            ...DocumentUtils.collectFragments([doc])
-          },
-          skip: skip);
+      final written = {
+        ...fragments,
+        ...DocumentUtils.collectFragments([doc])
+      };
+      // The documents the operation files embed, `id` fields included.
+      final own = IdFields.fragmentsOf(schemaDoc, written);
       for (final op in doc.definitions.whereType<OperationDefinitionNode>()) {
         final name = op.name?.value;
         if (name == null) continue;
@@ -1069,7 +1066,7 @@ class GraphQLCodegenBuilder implements Builder {
         try {
           text = persistedDocumentText(
               ClientExtensionGenerator.operationDocumentText(
-                  IdFields.operationOf(schemaDoc, op), own));
+                  IdFields.operationOf(schemaDoc, op, written), own));
         } on CodegenException {
           // Reported when that document itself is built.
           continue;

@@ -1,6 +1,8 @@
 // add_id_fields: `id` is selected on every object the cache can normalize.
 import 'package:flutter_graphql_codegen/src/config.dart';
 import 'package:flutter_graphql_codegen/src/config_context.dart';
+import 'package:flutter_graphql_codegen/src/diagnostics.dart';
+import 'package:flutter_graphql_codegen/src/document_utils.dart';
 import 'package:flutter_graphql_codegen/src/generator.dart';
 import 'package:flutter_graphql_codegen/src/id_fields.dart';
 import 'package:gql/ast.dart';
@@ -111,6 +113,71 @@ void main() {
           _rewritten('Rename'),
           r'mutation Rename($id: ID!, $name: String!) '
           r'{ rename(id: $id, name: $name) { id name } }');
+    });
+  });
+
+  group('keeps documents valid', () {
+    const schema = r'''
+interface Node { id: ID! }
+type User implements Node { id: ID! name: String! friends: [User!]! }
+type Post implements Node { id: ID! title: String! }
+type Legacy { id: Int! title: String! }
+type Draft { id: ID title: String! }
+union Hit = User | Post
+union Mixed = Post | Legacy | Draft
+type Query { me: User! search: [Hit!]! mixed: [Mixed!]! node: Node }
+''';
+
+    /// [text] with `id` added to its operation and fragments, on one line.
+    String rewrite(String text) {
+      final doc = gql_lang.parseString(text);
+      final ids = IdFields(
+          gql_lang.parseString(schema), DocumentUtils.collectFragments([doc]));
+      return [
+        for (final d in doc.definitions)
+          _flat(d is OperationDefinitionNode
+              ? ids.operation(d)
+              : ids.fragment(d as FragmentDefinitionNode)),
+      ].join(' ');
+    }
+
+    test('an id alias in a spread fragment keeps id off the object', () {
+      const text = 'query B { me { ...G } } fragment G on User { id: name }';
+      expect(rewrite(text), text);
+    });
+
+    test('an id alias in an inline fragment keeps id off the object', () {
+      const text = 'query C { me { ... on User { id: name } } }';
+      expect(rewrite(text), text);
+    });
+
+    test('a fragment that gets id, spread next to an id alias, fails', () {
+      expect(
+          () => rewrite(
+              'query A { me { id: name ...F } } fragment F on User { name }'),
+          throwsA(isA<CodegenException>()
+              .having((e) => e.code, 'code', 'BLD109')
+              .having((e) => e.message, 'message', contains('"F"'))));
+    });
+
+    test('types whose union siblings have another id type get none', () {
+      // Post shares Mixed with Legacy (Int!) and Draft (ID).
+      const text = 'query D { mixed { ... on Post { title } '
+          '... on Legacy { title } ... on Draft { title } } }';
+      expect(rewrite(text), text);
+      expect(
+          rewrite('query E { search { ... on User { name } '
+              '... on Post { title } } }'),
+          'query E { search { ... on User { id name } '
+          '... on Post { title } } }');
+    });
+
+    test('a fragment gets the same fields wherever it is spread', () {
+      expect(
+          rewrite('query N { node { ... on User { name } ...P } } '
+              'fragment P on Post { title }'),
+          'query N { node { id ... on User { name } ...P } } '
+          'fragment P on Post { title }');
     });
   });
 

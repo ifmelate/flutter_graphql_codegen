@@ -39,9 +39,12 @@ class TypeUsage {
         d.name.value: d,
     });
     if (CodegenConfigContext.addIdFields) {
-      final ids = IdFields(merged);
+      final ids = IdFields(merged, fragments);
       operations = [for (final o in operations) ids.operation(o)];
-      fragments = IdFields.fragmentsOf(merged, fragments);
+      fragments = {
+        for (final MapEntry(:key, :value) in fragments.entries)
+          key: ids.fragment(value),
+      };
     }
     for (final operation in operations) {
       for (final v in operation.variableDefinitions) {

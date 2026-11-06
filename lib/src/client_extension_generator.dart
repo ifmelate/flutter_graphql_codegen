@@ -98,8 +98,7 @@ $body''';
     final schema = DocumentUtils.mergeSchemaExtensions(schemaDoc);
     SchemaAnalyzer.extractCustomTypesAndEnums(schema);
     EnumSettings.validate(schema);
-    fragments = IdFields.fragmentsOf(schema, fragments,
-        skip: fragmentLibraries.keys.toSet());
+    fragments = IdFields.fragmentsOf(schema, fragments);
     final types =
         OperationTypes(schema, fragments, fragmentLibraries: fragmentLibraries);
     if (types.fragmentNames.isEmpty) return null;
@@ -292,9 +291,8 @@ ${request(writeIdFields)},
       DocumentValidator(schema).check(written, writtenFragments);
     }
     // With add_id_fields, `id` is selected as if the documents had it.
-    final operation = IdFields.operationOf(schema, written);
-    final allFragments = IdFields.fragmentsOf(schema, writtenFragments,
-        skip: fragmentLibraries.keys.toSet());
+    final operation = IdFields.operationOf(schema, written, writtenFragments);
+    final allFragments = IdFields.fragmentsOf(schema, writtenFragments);
 
     final context = _OperationContext(
       name: operationName,
