@@ -44,10 +44,15 @@ class MigrationException implements Exception {
 /// [schemaFiles] lists the files matching a glob that hold a GraphQL schema
 /// (graphql_codegen finds the schema among its documents); by default the
 /// files under [root] are read.
+///
+/// [readLibrary] returns the source of a `package:` library of the project
+/// (or null), to see which coercers an Artemis parser file defines; by
+/// default libraries of the package at [root] are read.
 Migration migrateBuildYaml(
   String buildYaml, {
   String root = '.',
   List<String> Function(String glob)? schemaFiles,
+  String? Function(String uri)? readLibrary,
 }) {
   final Object? doc;
   try {
@@ -63,7 +68,14 @@ Migration migrateBuildYaml(
           final name = '$key'.split(RegExp('[:|]')).first;
           if (name != 'artemis' && name != 'graphql_codegen') continue;
           final options = value is Map ? value['options'] : null;
-          found[name] = options is Map ? options : const {};
+          final map = options is Map ? options : const <Object?, Object?>{};
+          final previous = found[name];
+          if (previous != null && '$previous' != '$map') {
+            throw MigrationException('build.yaml configures $name in more '
+                'than one target with different options; keep the one to '
+                'migrate and run migrate again.');
+          }
+          found[name] = map;
         }
       }
     }
@@ -78,12 +90,14 @@ Migration migrateBuildYaml(
   }
   final MapEntry(key: from, value: options) = found.entries.single;
   return from == 'artemis'
-      ? _fromArtemis(options)
+      ? _fromArtemis(
+          options, readLibrary ?? (uri) => _readLocalLibrary(root, uri))
       : _fromGraphqlCodegen(
           options, schemaFiles ?? (glob) => _localSchemaFiles(root, glob));
 }
 
-Migration _fromArtemis(Map<Object?, Object?> options) {
+Migration _fromArtemis(
+    Map<Object?, Object?> options, String? Function(String uri) readLibrary) {
   final notes = <String>[];
   final maps = [
     for (final m in (options['schema_mapping'] as List?) ?? const [])
@@ -158,12 +172,36 @@ Migration _fromArtemis(Map<Object?, Object?> options) {
             : null);
     final entry = <String, String>{'type': type};
     if (parser != null) {
-      // Artemis' coercers for the non-null case; the converter handles null.
-      final dartName = type.replaceAll(RegExp(r'\W'), '');
+      // Artemis names its coercers after the field's shape and projects
+      // define the shapes they use: take the plain or the nullable pair,
+      // whichever the parser file has (the converter handles null).
+      final d = type.replaceAll(RegExp(r'\W'), '');
+      final source = readLibrary('$parser');
+      bool defines(String name) =>
+          source != null && RegExp('\\b$name\\s*\\(').hasMatch(source);
+      final pairs = [
+        ('fromGraphQL${graphql}ToDart$d', 'fromDart${d}ToGraphQL$graphql'),
+        (
+          'fromGraphQL${graphql}NullableToDart${d}Nullable',
+          'fromDart${d}NullableToGraphQL${graphql}Nullable'
+        ),
+      ];
+      final found = pairs
+          .where((pair) => defines(pair.$1) && defines(pair.$2))
+          .firstOrNull;
+      final (fromJson, toJson) = found ?? pairs.first;
       entry
         ..['import'] = '$parser'
-        ..['from_json'] = 'fromGraphQL${graphql}ToDart$dartName'
-        ..['to_json'] = 'fromDart${dartName}ToGraphQL$graphql';
+        ..['from_json'] = fromJson
+        ..['to_json'] = toJson;
+      if (found == null) {
+        notes.add(source == null
+            ? 'Scalar $graphql: check that $parser defines $fromJson and '
+                '$toJson (or the ...Nullable... pair, then use those names).'
+            : 'Scalar $graphql: $parser defines neither $fromJson/$toJson '
+                'nor the ...Nullable... pair, only coercers for lists. Add '
+                'the plain pair, which is used for every field shape.');
+      }
       if (typeImports.isNotEmpty) {
         notes.add('Scalar $graphql: only one import per scalar is read. '
             'Export ${typeImports.join(', ')} from $parser, or the type '
@@ -171,6 +209,11 @@ Migration _fromArtemis(Map<Object?, Object?> options) {
       }
     } else if (typeImports.isNotEmpty) {
       entry['import'] = typeImports.first;
+      if (typeImports.length > 1) {
+        notes.add('Scalar $graphql: only one import per scalar is read; '
+            '${typeImports.skip(1).join(', ')} must be exported by '
+            '${typeImports.first}.');
+      }
       notes.add('Scalar $graphql: $type is parsed with $type.fromJson and '
           'written with toJson(); check that it has them, or add from_json '
           'and to_json (see README, Custom scalars).');
@@ -203,12 +246,28 @@ Migration _fromGraphqlCodegen(Map<Object?, Object?> options,
         'reads one schema per package. Move each scope to a package of its '
         'own, each with its own graphql_codegen.yaml.');
   }
-  // graphql_codegen reads .graphql, .gql and .graphqls files; operations
-  // here must be .graphql files.
-  final assets =
-      '${options['assetsPath'] ?? 'lib/**{.graphql,.gql,.graphqls}'}';
-  final documentGlob = assets.replaceAll(RegExp(r'\{\.[\w.,]+\}$'), '.graphql');
-  if (documentGlob != assets || assets.endsWith('.gql')) {
+  // graphql_codegen reads the files matching both assetsPath and the scope.
+  const defaultAssets = 'lib/**{.graphql,.gql,.graphqls}';
+  final assetsPath = options['assetsPath'];
+  final scope = scopes.isEmpty || scopes.single == '**{.graphql,.gql,.graphqls}'
+      ? null
+      : scopes.single;
+  final String assets;
+  if (scope != null && assetsPath == null) {
+    assets = scope;
+  } else {
+    assets = '${assetsPath ?? defaultAssets}';
+    if (scope != null) {
+      notes.add('graphql_codegen read the files matching both assetsPath '
+          '($assets) and the scope ($scope); document_paths takes one glob '
+          'list, so narrow it by hand.');
+    }
+  }
+  // Operations here must be .graphql files.
+  final documentGlob = assets
+      .replaceAll(RegExp(r'\{\.[\w.,]+\}$'), '.graphql')
+      .replaceAll(RegExp(r'\.(gql|graphqls)$'), '.graphql');
+  if (documentGlob != assets) {
     notes.add('Only .graphql files are read as documents: rename any .gql '
         'operation files.');
   }
@@ -314,6 +373,10 @@ Migration _fromGraphqlCodegen(Map<Object?, Object?> options,
         entry['fallback'] = '$fallback';
       }
       if (value['type'] case final Object type) {
+        if (value['import'] == null) {
+          notes.add('Enum $key: add the import that exports $type and its '
+              'functions.');
+        }
         entry
           ..['type'] = '$type'
           ..['import'] =
@@ -384,6 +447,24 @@ String _write({
   section('scalar_mapping', scalars);
   section('enums', enums);
   return out.toString();
+}
+
+/// The source of `package:` library [uri] of the package at [root], or null
+/// when it belongs to another package or doesn't exist.
+String? _readLocalLibrary(String root, String uri) {
+  final match = RegExp(r'^package:([^/]+)/(.+)$').firstMatch(uri);
+  if (match == null) return null;
+  final pubspec = io.File(p.join(root, 'pubspec.yaml'));
+  if (!pubspec.existsSync()) return null;
+  final Object? name;
+  try {
+    name = (loadYaml(pubspec.readAsStringSync()) as Map?)?['name'];
+  } on YamlException {
+    return null;
+  }
+  if (name != match.group(1)) return null;
+  final file = io.File(p.join(root, 'lib', match.group(2)!));
+  return file.existsSync() ? file.readAsStringSync() : null;
 }
 
 /// The files matching [glob] under [root] that define schema types.

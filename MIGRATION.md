@@ -297,10 +297,13 @@ dart run flutter_graphql_codegen:migrate
 reads the `artemis` options in `build.yaml` and writes
 `graphql_codegen.yaml`: the schema, `queries_glob` and `fragments_glob` as
 `document_paths`, and `scalar_mapping`. A scalar with `custom_parser_import`
-keeps your coercers: `fromGraphQLDateToDartDateTime` and
-`fromDartDateTimeToGraphQLDate` become `from_json` and `to_json` (the
-non-null pair is enough, null is handled for you). The command then lists
-what it couldn't carry over. Then:
+keeps your coercers as `from_json` and `to_json`. Artemis names them after
+the field's shape, so `migrate` looks into that file and takes
+`fromGraphQLDateToDartDateTime`/`fromDartDateTimeToGraphQLDate` or the
+`...Nullable...` pair, whichever it defines; one pair serves every field
+shape, null and lists are handled for you. If the file has only list
+coercers, or isn't in your package, the command says which pair to add or
+check. It then lists everything else it couldn't carry over. Then:
 
 ```yaml
 # pubspec.yaml

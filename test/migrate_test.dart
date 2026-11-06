@@ -214,6 +214,96 @@ targets:
     });
   });
 
+  group('review cases', () {
+    const artemisDate = r'''
+targets:
+  $default:
+    builders:
+      artemis:
+        options:
+          scalar_mapping:
+            - graphql_type: Date
+              dart_type: DateTime
+              custom_parser_import: package:app/coercers.dart
+          schema_mapping:
+            - {schema: s.graphql, queries_glob: q.graphql, output: lib/q.dart}
+''';
+
+    test('Artemis coercers: takes the nullable pair when only it exists', () {
+      final m = migrateBuildYaml(artemisDate,
+          readLibrary: (uri) => uri == 'package:app/coercers.dart'
+              ? 'DateTime? fromGraphQLDateNullableToDartDateTimeNullable('
+                  'String? d) => null;\n'
+                  'String? fromDartDateTimeNullableToGraphQLDateNullable('
+                  'DateTime? d) => null;'
+              : null);
+      final config = _parse(m);
+      expect(config.scalarFunctions['Date']?.fromJson,
+          'fromGraphQLDateNullableToDartDateTimeNullable');
+      expect(m.notes.join('\n'), isNot(contains('Scalar Date')));
+    });
+
+    test('Artemis coercers: says when the file has neither pair', () {
+      final notes = migrateBuildYaml(artemisDate,
+              readLibrary: (_) =>
+                  'List<DateTime> fromGraphQLListDateToDartListDateTime(x) => [];')
+          .notes
+          .join('\n');
+      expect(notes, contains('only coercers for lists'));
+      final unread =
+          migrateBuildYaml(artemisDate, readLibrary: (_) => null).notes;
+      expect(
+          unread.join('\n'), contains('check that package:app/coercers.dart'));
+    });
+
+    String gc(String options) => '''
+targets:
+  \$default:
+    builders:
+      graphql_codegen:
+        options:
+$options''';
+
+    test('a single scope narrows the documents', () {
+      final m = migrateBuildYaml(gc('          scopes: [lib/api/**.graphql]\n'),
+          schemaFiles: (glob) =>
+              glob == 'lib/api/**.graphql' ? ['lib/api/schema.graphql'] : []);
+      expect(_parse(m).documentPaths, ['lib/api/**.graphql']);
+      expect(_parse(m).schemaUrl, 'lib/api/schema.graphql');
+    });
+
+    test('a .gql assetsPath becomes .graphql', () {
+      final m = migrateBuildYaml(gc('          assetsPath: lib/**.gql\n'),
+          schemaFiles: (_) => []);
+      expect(_parse(m).documentPaths, ['lib/**.graphql']);
+      expect(m.notes.join('\n'), contains('rename any .gql'));
+    });
+
+    test('refuses two targets with different options', () {
+      expect(
+          () => migrateBuildYaml(r'''
+targets:
+  $default:
+    builders:
+      graphql_codegen:
+        options: {scalars: {URL: {type: String}}}
+  other:
+    builders:
+      graphql_codegen:
+        options: {}
+''', schemaFiles: (_) => []),
+          throwsA(isA<MigrationException>().having(
+              (e) => e.message, 'message', contains('more than one target'))));
+    });
+
+    test('an enum type without import gets a note', () {
+      final m = migrateBuildYaml(
+          gc('          enums: {Role: {type: AppRole}}\n'),
+          schemaFiles: (_) => []);
+      expect(m.notes.join('\n'), contains('Enum Role: add the import'));
+    });
+  });
+
   test('refuses a build.yaml without either generator', () {
     expect(() => migrateBuildYaml('targets: {}'),
         throwsA(isA<MigrationException>()));

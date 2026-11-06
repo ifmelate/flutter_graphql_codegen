@@ -15,8 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   object only inside the result that returned it: a mutation returning
   `rename { name }` didn't update other queries, and
   `read<Fragment>Fragment` returned null. Checked against `package:graphql`
-  5.2 with a server that returns only the selected fields. Off by default,
-  since it changes the documents and persisted document ids
+  5.2 with a server that returns only the selected fields. Two cases stay
+  without `id` so documents stay valid: a selection where another field is
+  aliased `id` (also through inline fragments and spreads; a fragment that
+  would get `id` there fails with `BLD109`), and types that share a union
+  or interface with a type whose `id` has another type. Imported fragments
+  (`fragment_imports`) follow the option too, so both packages need the
+  same setting. Off by default, since it changes the documents and
+  persisted document ids
 
 - `scalar_mapping` takes `from_json` and `to_json`: two top-level functions
   converting a custom scalar, which `import` exports, as Artemis and
