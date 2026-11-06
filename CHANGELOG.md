@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `add_id_fields: true` selects `id` on every object type and interface
+  that has a scalar `id` field, the way `__typename` is added, in the sent
+  documents and in the result classes. In unions it goes into the
+  `... on Type` selections. Without `id` the normalized cache keeps an
+  object only inside the result that returned it: a mutation returning
+  `rename { name }` didn't update other queries, and
+  `read<Fragment>Fragment` returned null. Checked against `package:graphql`
+  5.2 with a server that returns only the selected fields. Off by default,
+  since it changes the documents and persisted document ids
+
+### Fixed
+- The README said a query selecting an object without `id` could fail with
+  `CacheMissException`; that doesn't happen with `package:graphql` 5.2. It
+  now describes what does: stale results after mutations and fragment reads
+  that return null
+
 ## [3.3.0] - 2026-10-25
 
 ### Added
