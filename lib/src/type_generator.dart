@@ -471,7 +471,10 @@ ${_generateNullableConverters()}${_usesEnumRaw ? _enumRawHelper : ''}''';
     };
     for (final MapEntry(key: scalar, value: functions)
         in CodegenConfigContext.scalarFunctions.entries) {
-      if (!scalars.contains(scalar) || !_keep(scalar)) continue;
+      // Built-in scalars (ID, String, ...) aren't declared in the schema
+      // and aren't pruned.
+      final builtIn = GraphQLConstants.builtInScalars.contains(scalar);
+      if (!builtIn && (!scalars.contains(scalar) || !_keep(scalar))) continue;
       final type = CodegenConfigContext.scalarMapping[scalar]!;
       final name = ScalarFunctions.converterName(scalar);
       buffer.writeln('''
@@ -483,7 +486,9 @@ class $name implements JsonConverter<$type, Object> {
   @override
   $type fromJson(Object json) {
     final dynamic value = json;
-    return ${functions.fromJson}(value);
+    // Also for functions with nullable types (Artemis' `...Nullable...`).
+    final Object? result = ${functions.fromJson}(value);
+    return result as $type;
   }
 
   @override

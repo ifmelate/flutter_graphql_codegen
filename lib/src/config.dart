@@ -691,7 +691,12 @@ class ScalarFunctions {
   /// Name of a function taking the Dart type and returning its JSON value.
   final String toJson;
 
-  /// Name of the `JsonConverter` that `types.dart` declares for [scalar].
-  static String converterName(String scalar) =>
-      '${scalar[0].toUpperCase()}${scalar.substring(1)}FunctionsConverter';
+  /// Name of the `JsonConverter` that `types.dart` declares for [scalar]:
+  /// public, also for scalars such as Hasura's `_text`.
+  static String converterName(String scalar) {
+    final name = scalar.replaceFirst(RegExp('^_+'), '');
+    return name.isEmpty
+        ? 'ScalarFunctionsConverter'
+        : '${name[0].toUpperCase()}${name.substring(1)}FunctionsConverter';
+  }
 }

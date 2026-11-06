@@ -20,7 +20,10 @@ import 'support/compile_harness.dart';
 const _schema = r'''
 scalar Money
 scalar Stamp
+scalar _text
 type Item {
+  ref: ID!
+  tags: _text
   price: Money!
   prices: [Money!]!
   maybe: [Money]
@@ -32,7 +35,7 @@ type Query { item(price: Money, input: ItemInput): Item! total: Money! }
 
 const _document = r'''
 query GetItem($price: Money, $input: ItemInput) {
-  item(price: $price, input: $input) { price prices maybe stamp }
+  item(price: $price, input: $input) { ref tags price prices maybe stamp }
   total
 }
 ''';
@@ -55,6 +58,19 @@ int moneyToJson(Money money) => money.cents;
 DateTime stampFromJson(dynamic json) =>
     DateTime.fromMillisecondsSinceEpoch(json as int, isUtc: true);
 dynamic stampToJson(DateTime stamp) => stamp.millisecondsSinceEpoch;
+
+// Hasura's `_text` (a Postgres array literal) and a built-in scalar.
+List<String> textFromJson(String json) =>
+    json.substring(1, json.length - 1).split(',');
+String textToJson(List<String> tags) => '{${tags.join(',')}}';
+
+class Ref {
+  const Ref(this.value);
+  final String value;
+}
+
+Ref refFromJson(String json) => Ref(json);
+String refToJson(Ref ref) => ref.value;
 ''';
 
 const _config = '''
@@ -71,6 +87,16 @@ scalar_mapping:
     import: package:fgc_compile_check/scalars/money.dart
     from_json: stampFromJson
     to_json: stampToJson
+  _text:
+    type: List<String>
+    import: package:fgc_compile_check/scalars/money.dart
+    from_json: textFromJson
+    to_json: textToJson
+  ID:
+    type: Ref
+    import: package:fgc_compile_check/scalars/money.dart
+    from_json: refFromJson
+    to_json: refToJson
 ''';
 
 String _main(String dir) => '''
@@ -90,6 +116,8 @@ void main() {
       'prices': [1, 2],
       'maybe': [3, null],
       'stamp': 86400000,
+      'ref': 'r1',
+      'tags': '{a,b}',
     },
     'total': 999,
   });
@@ -99,6 +127,9 @@ void main() {
   check(item.maybe![1] == null, 'null list element');
   check(item.stamp!.day == 2, 'function taking dynamic');
   check(item.toJson()['price'] == 150, 'toJson');
+  check(item.ref.value == 'r1', 'built-in scalar with functions');
+  check(item.tags![1] == 'b' && item.toJson()['tags'] == '{a,b}',
+      'scalar named with an underscore');
   final vars = GetItemVariables(
     price: const Money(5),
     input: ItemInput(price: const Money(6), stamp: DateTime.utc(1970, 1, 2)),
@@ -146,6 +177,10 @@ void main() {
     };
     expect(files['lib/operation/types.dart'],
         contains('class MoneyFunctionsConverter'));
+    expect(
+        files['lib/operation/types.dart'],
+        allOf(contains('class TextFunctionsConverter'),
+            contains('class IDFunctionsConverter')));
     final result = await compileGenerated(files,
         runScripts: ['bin/operation.dart', 'bin/schema.dart']);
     expect(result.errors, isEmpty, reason: result.log);
